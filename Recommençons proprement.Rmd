@@ -1,0 +1,895 @@
+---
+title: "Recommençons proprement"
+author: "Vincyane Badouard"
+date: "05/06/2020"
+output: html_document
+---
+
+```{r Packages}
+library(tidyverse) 
+library(diffdf) #comparaison de basee de données
+library(knitr)
+library(BIOMASS)
+library(vroom)
+library(polycor)
+library(corrplot)
+library(RColorBrewer)
+library(Hmisc) #rcorr
+library(car)
+library(ggsignif)
+library(entropart) #divervity computation
+library(DescTools) #StrLeft, StrRight
+
+```
+
+
+Repartir de la base de données originale de Marco.
+
+```{r chargement de la base de données originale de Marco}
+
+Marco_raw <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Marco/data_FT.csv", ";", escape_double = FALSE, locale = locale(decimal_mark = ","), trim_ws = TRUE)
+
+#vérifier la présence des virgules
+```
+
+Charger la base de données post-terrain, contenant sa base complétée et la mienne.
+
+```{r Charger la base de données post-terrain}
+
+ DATABASE <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/DATABASE.csv", ";", escape_double = FALSE, locale = locale(decimal_mark = ","), trim_ws = TRUE)
+
+#vérifier la présence des virgules
+```
+
+Séparer la base de données post-terrain en 2 : celle de Marco & la mienne.
+
+```{r Séparation de la base de données post-terrain}
+Marco_field <- filter(DATABASE, Operator == "Marco")
+My_field <- filter(DATABASE, Operator == "Vincyane")
+
+```
+
+Joindre la colonne SPAD de la base Marco_terrain à Marco_raw
+
+```{r ajouter Spad à la base initiale de Marco}
+
+Marco_raw_rename <- Marco_raw %>% 
+  rename(Vernacular = Vernaculier) %>% 
+  rename(TreeID = treeID) %>%
+  rename(SampleID = sampleID) %>%
+  rename(genus = Genus, species = Species)
+
+  
+          
+spad <- Marco_field %>% 
+  select(Vernacular,TreeID, SampleID, SPAD)
+  
+Marco_raw_spad <- Marco_raw_rename %>% 
+  left_join(spad, by = c("Vernacular","TreeID", "SampleID"))
+
+```
+
+Compléter la BD originale de Marco par les données que je lui ai ajouté, se trouvant dans la BD post-terrain.
+
+```{r Compléter BD originale de Marco}
+
+#on crée une boucle afin de réaliser le complétage de données par variable :
+
+All_traits <- c("BarkTh", "PetioleL",	"LeafThickness", "FreshWeight",	"DryWeight")
+
+Marco_completed <- Marco_raw_spad #créer une version à compléter
+
+for(trait in All_traits){ # Pour chaque valeur que peut prendre trait dans All_traits
+  which(is.na(Marco_completed[,trait])) -> rows #renvoyer les lignes 
+  Marco_completed [rows, trait] <- DATABASE [rows, trait]
+}
+
+
+diffdf(Marco_raw_spad,Marco_completed) #vérifier que la base a été complétée
+
+#créer une colonne "Filled" identifiant les lignes ayant reçu de nouvelles données cette année :
+Marco_completed$Filled <- Marco_completed$Filled <- 0 #on lui attribue 0 pour l'instant
+
+Marco_completed$Filled[88:90] <-Marco_completed$Filled[88:90] <- 1 
+Marco_completed$Filled[170] <-Marco_completed$Filled[170] <- 1 
+
+```
+
+Enregistrer la BD de Marco actualisée.
+
+```{r BD de Marco}
+write.csv2(Marco_completed, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Marco_completed.csv")
+
+```
+
+Transformer les Leafarea de Marco de cm2 à mm2, ainsi que SLA
+
+```{r Leafarea & SLA de Marco de cm2 à mm2}
+
+Marco_modifmm2 <- Marco_completed %>% 
+  mutate(LeafArea= LeafArea*100) %>% 
+  mutate(SLA= SLA*100)
+
+
+```
+
+*Maintenant je ne travaille que sur mon terrain perso. Je joindrai ma base à celle de Marco à la fin.*
+
+Importer les surfaces (mm2) de feuilles et de racines :
+
+```{r leaves base preparation}
+leaves_area <- read_csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Leaves/Summary of Leaves.csv")
+
+ #Manipulation de la table
+Tulipier <- leaves_area %>% #Cas du "tulipier du Gabon"
+  slice(360:375) %>% 
+  select(Slice,`Total Area`) %>% 
+  separate(Slice, sep = " ",
+           into = c("sp1", "sp2", "sp3","num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  unite(sp1, sp2, sp3, col = "sp", sep = " ") %>% #créer un colonne ac le nom complet de l'sp
+  mutate(orient = substr(orientation, 2, 2)) %>% #coller la lettre (orient) et l'id de l'image (image)
+  mutate(image = substr(orientation, 3, 3)) %>%
+  select(-Slice, -truc, -orientation) 
+
+
+leaves_area_prep <- leaves_area %>%
+  select(Slice,`Total Area`) %>% 
+  separate(Slice, sep = " ",
+           into = c("sp1", "sp2", "num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  mutate(truc = ifelse(is.na(truc), orientation, truc)) %>% #si truc = NA, = orientation, sinon laisser truc
+  mutate(orientation = ifelse(orientation == "001", num_indiv, orientation)) %>% 
+  mutate(num_indiv = ifelse(num_indiv == orientation, sp2, num_indiv)) %>% 
+  mutate(sp2 = ifelse(sp2 == num_indiv, "", sp2)) %>% 
+  unite(sp1, sp2, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% #prendre les 2 1ers characters d' orientation et les mettre dans orient
+  mutate(image = substr(orientation, 3, 3)) %>% #prendre le dernier character
+  select(-Slice, -truc, -orientation) %>% 
+  slice(1:359) %>% #enlever la partie tulipier
+  bind_rows(Tulipier)
+
+```
+
+
+```{r leaves area compute}
+
+details <- leaves_area_prep %>%
+  rename(Area = `Total Area`) %>% 
+  group_by(sp, num_indiv, orient) %>% #calculer la surface foliaire par sp, indiv et orient, additionnant ainsi les images a, b, c lorsqu'il y a.
+  mutate(Total_Area = sum(Area))
+#Là on a une surface par ligne, réétant ainsi la valeur sur a,b,c
+#Permettant de vérifier que le calcul a bien été réalisé
+
+summarise <- leaves_area_prep %>%
+  rename(Area = `Total Area`) %>% 
+  group_by(sp, num_indiv, orient) %>% 
+  summarise(Total_Area = sum(Area)) %>% 
+  ungroup() #emporter pour utiliser la base avec les varaiables déliées
+#Ici tableau final
+
+```
+
+
+```{r add at my general database}
+
+#renommer les colonnes communes, homogénéisation des codes :
+summarise <- summarise %>% 
+  rename(TreeID = num_indiv) %>%
+  rename(SampleID = orient) %>%
+  rename(Vernacular = sp) %>%
+  rename(Leaves_area = Total_Area) %>% 
+  mutate(SampleID = as.numeric(as.character(SampleID))) %>%
+  mutate(TreeID = recode(TreeID, "'1' = 'A' ; '2' = 'B'; '3' = 'C'; '4' = 'D'"))
+         
+summarise$Vernacular <- trimws(summarise$Vernacular,"r") #enlever l'espace à droite (r)
+
+#combiner les tables :
+Mybase_leafarea <- My_field %>% 
+  left_join(summarise, by = c("Vernacular", "TreeID", "SampleID"))
+
+Mybase_leafarea$LeafArea = Mybase_leafarea$Leaves_area #mettre les valeurs dans la colonne dédiée
+
+Mybase_leafarea <- Mybase_leafarea %>% 
+  select(-Leaves_area)
+
+# enregistrer cette étape
+write.csv2(Mybase_leafarea, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Mybase_leafarea.csv")
+
+```
+
+```{r roots base preparation}
+roots_area <- read_csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Roots/Treatments/Summary of Roots.csv")
+
+Tulipierroots <- roots_area %>% 
+  slice(255:263) %>% 
+  select(Slice,`Total Area`) %>% 
+  separate(Slice, sep = " ",
+           into = c("sp1", "sp2", "sp3","num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  unite(sp1, sp2, sp3, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% 
+  mutate(image = substr(orientation, 3, 3)) %>%
+  select(-Slice, -truc, -orientation) 
+
+
+roots_area_prep <- roots_area %>%
+  select(Slice,`Total Area`) %>% 
+  separate(Slice, sep = " ",
+           into = c("sp1", "sp2", "num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  mutate(truc = ifelse(is.na(truc), orientation, truc)) %>% #si truc = NA, = orientation, sinon laisser truc
+  mutate(orientation = ifelse(orientation == "001", num_indiv, orientation)) %>% 
+  mutate(num_indiv = ifelse(num_indiv == orientation, sp2, num_indiv)) %>% 
+  mutate(sp2 = ifelse(sp2 == num_indiv, "", sp2)) %>% 
+  unite(sp1, sp2, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% #prendre les 2 1ers characters d' orientation et les mettre dans orient
+  mutate(image = substr(orientation, 3, 3)) %>% #prendre le dernier character
+  select(-Slice, -truc, -orientation) %>% 
+  slice(1:254) %>% #enlever la partie tulipier
+  bind_rows(Tulipierroots)
+
+```
+
+```{r roots area compute}
+
+details_roots <- roots_area_prep %>%
+  rename(Area = `Total Area`) %>% 
+  group_by(sp, num_indiv, orient) %>% 
+  mutate(Total_Area = sum(Area))
+
+summary_roots <- roots_area_prep %>%
+  rename(Area = `Total Area`) %>% 
+  group_by(sp, num_indiv, orient) %>% 
+  summarise(Total_Area = sum(Area)) %>% 
+  ungroup()
+
+
+```
+
+```{r add at my general database}
+
+#renommer les colonnes communes, homogénéisation des codes :
+summary_roots <- summary_roots %>% 
+  rename(TreeID = num_indiv) %>%
+  rename(SampleID = orient) %>%
+  rename(Vernacular = sp) %>%
+  rename(RootsArea = Total_Area) %>% 
+  mutate(SampleID = as.numeric(as.character(SampleID))) %>%
+  mutate(TreeID = recode(TreeID, "'1' = 'A' ; '2' = 'B'; '3' = 'C'; '4' = 'D'"))
+         
+summary_roots$Vernacular <- trimws(summary_roots$Vernacular,"r")
+
+#combiner les tables :
+Mybase_areas <- Mybase_leafarea %>% 
+  left_join(summary_roots, by = c("Vernacular", "TreeID", "SampleID"))
+
+#Enlever les décimales comme Marco
+Mybase_areas$LeafArea <- format(Mybase_areas$LeafArea, digits = 0, scientific = F) #0 décimales
+
+
+write.csv2(Mybase_areas, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Mybase_areas.csv")
+
+```
+
+
+```{r LDMC, SLA compute}
+
+Mybase_areas$LeafArea <- as.numeric(Mybase_areas$LeafArea)
+Mybase_areas$RootsArea <- as.numeric(Mybase_areas$RootsArea)
+
+Mybase_computes <- Mybase_areas %>%
+  mutate(LDMC = DryWeight/FreshWeight) %>% #sec en mg, frais en g
+  mutate(SLA = LeafArea/DryWeight) %>% 
+  mutate(RSA = RootsArea/Rootdryweight) %>% 
+  mutate(WD = as.character(SampleID))
+
+write.csv2(Mybase_computes, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Mybase_computes.csv")
+  
+```
+
+
+Rejoindre la base de Marco et la mienne
+
+```{r Marco + moi}
+
+#créer les colonnes manquantes à Marco 
+Marco_allcol <- Marco_modifmm2 
+Marco_allcol$Operator <- Marco_allcol$Operator <- "Marco" 
+
+
+
+together <- bind_rows(Marco_allcol, Mybase_computes) 
+
+Ourtraitsbase <- together %>% 
+  select(-27) %>% #enlever la colonne "�"
+  select(-"N", -"ID TRY") #supprimer les col qui servent plus à rien
+  
+
+```
+
+Mettre à jour la taxonomie botanique
+```{r Taxo bota mise à jour}
+
+Data_Tene <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/data_final.csv", 
+    ";", escape_double = FALSE, locale = locale(decimal_mark = ","), 
+    trim_ws = TRUE)
+
+Data_Tene <- Data_Tene %>% 
+  rename(genus = genus.y) %>% 
+  rename(species = species.y)
+
+
+#ajouter une colonne avec les nouveaux noms vernaculaires 
+
+New_verna <- Data_Tene %>% 
+  select(genus, species, field_name) %>% 
+  distinct() %>% 
+  filter(!(field_name == "faux.cafeir")) %>% 
+  filter(!(field_name =="ouokoue")) %>% 
+  mutate(field_name = ifelse((genus == "Morelia"), "kamaia" , field_name))
+
+
+NewBota <- Ourtraitsbase %>%
+  left_join(New_verna, by = c("genus","species")) #reconnaissance par nom scientifique commun
+
+sum(is.na(NewBota$field_name)) #138 soit 15 sp non reconnues
+NAtable <- NewBota[is.na(NewBota$field_name),] #138 soit 15 sp non reconnues
+
+#Quand field_name = NA, lui attribuer la valeur dans Vernacular, tout en minuscule
+
+NewBota1 <- NewBota %>% 
+  mutate(field_name = ifelse(is.na(field_name), tolower(Vernacular), field_name)) %>% 
+  mutate(field_name = recode(field_name, "'banaye heudeloti' = 'banaye'; 'akossika' = 'akossika.petites.feuilles'; 'bi ou eyong' = 'bi'")) %>% 
+#reccuperer le nom scientifique de ces espèces 
+  rename(OldVernacular = Vernacular, Oldgenus = genus, Oldspecies = species, OldScientificName = ScientificName) %>%
+  left_join(New_verna, by = "field_name")  #créer Newgenus et Newspecies
+
+NAtable <- NewBota1[is.na(NewBota1$genus),]
+
+```
+
+
+Calcul du DBH moyen par espèce
+
+```{r DBH moyen/sp}
+
+DBH_data_details <- Data_Tene %>% 
+  select(genus, species, dbh) %>% 
+  filter(!is.na(dbh)) %>% 
+  filter(!is.na(genus)) %>% 
+  group_by(genus, species) %>% 
+  mutate(MeanDBH = mean(dbh))
+
+DBH_data <- Data_Tene %>%  #DBH moyen par sp de tout Téné
+  select(genus, species, dbh) %>% 
+  filter(!is.na(dbh)) %>% 
+  filter(!is.na(genus)) %>% 
+  group_by(genus, species) %>% 
+  summarise(mean(dbh)) %>% 
+  rename(MeanDBH = "mean(dbh)")
+
+# L'ajouter à la base
+
+Ourbase_DBH <- NewBota1 %>% 
+  left_join(DBH_data, by = c("genus","species"))
+
+NAtable <- Ourbase_DBH[is.na(Ourbase_DBH$MeanDBH),]
+
+```
+
+Calcul des abondances
+
+```{r Abondances}
+abond_sp <- Data_Tene %>% 
+  filter(!is.na(genus)) %>% 
+  group_by(genus,species) %>% #pour réaliser les opérations suivantes par groupes de modalités
+  summarise(N = n()) %>%  #créer une variable résumant les effectifs des éléments de "Vernacular"
+  arrange(desc(N)) %>% 
+  ungroup(genus, species)
+
+Ourbase_N <- Ourbase_DBH %>% 
+  left_join(abond_sp, by = c("genus","species"))
+
+NAtable <- Ourbase_N[is.na(Ourbase_N$N),]
+
+write.csv2(Ourbase_N, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Ourbase_N")
+
+# Nos sp sont-elles les 50 sp les + abondantes ?
+
+#créer un vecteur commun contenant les noms scientifiques :
+abond_sctfic <- abond_sp %>% 
+  unite(genus, species, col = "ScientificName", sep = " ", remove = F) %>% 
+  left_join(New_verna, by = c("genus","species")) #pour ajouter les noms vernaculaires
+
+#ajouter family à la base :
+New_verna_family <- Data_Tene %>% #créer une table bota contenant family pour le join
+  select(genus, species, family) %>% 
+  distinct() 
+
+Our_new_taxo <- NewBota1 %>% 
+  select(genus, species) %>% 
+  mutate(genus = as.factor(as.character(genus))) %>%
+  mutate(species = as.factor(as.character(species))) %>% 
+  group_by(genus,species) %>% 
+  distinct(genus) %>% #enlever les lignes répétées
+  filter(!is.na(genus)) %>% 
+  unite(genus, species, col = "ScientificName", sep = " ", remove = F) %>% 
+  left_join(New_verna_family, by = c("genus","species")) 
+
+Most_abond <- abond_sctfic %>% 
+  slice(1:50) %>% #les 50 sp les + abondantes
+  filter(!(ScientificName %in% Our_new_taxo$ScientificName)) # 7 sp manques
+
+sp_ab_intru <- filter(Ourbase_N, N < 55) #les 7 sp de la base qui ne font pas parties des 50 les + abondantes 
+
+```
+
+Ajouter les longueurs de racines à la base & calculer le RSL
+
+```{r Préparation de ma base de longueurs}
+
+My_lengths <- read_csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Roots/Treatments/results_length.csv")
+
+#caluler la longueur de l'orientation si ya des a,b
+
+Tulipierlength <- My_lengths %>% 
+  slice(255:263) %>% 
+  select(image, length) %>% 
+  separate(image, sep = " ",
+           into = c("sp1", "sp2", "sp3","num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  unite(sp1, sp2, sp3, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% 
+  mutate(picture = substr(orientation, 3, 3)) %>%
+  select(-image, -truc, -orientation) 
+
+
+My_lenths_prep <- My_lengths %>%
+  select(image, length) %>% 
+  separate(image, sep = " ",
+           into = c("sp1", "sp2", "num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  mutate(truc = ifelse(is.na(truc), orientation, truc)) %>% 
+  mutate(orientation = ifelse(orientation == "001.tif", num_indiv, orientation)) %>% 
+  mutate(num_indiv = ifelse(num_indiv == orientation, sp2, num_indiv)) %>% 
+  mutate(sp2 = ifelse(sp2 == num_indiv, "", sp2)) %>% 
+  unite(sp1, sp2, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% #prendre les 2 1ers characters d' orientation et les mettre dans orient
+  mutate(picture = substr(orientation, 3, 3)) %>% #prendre le dernier character
+  select(-image, -truc, -orientation) %>% 
+  slice(1:254) %>% #enlever la partie tulipier
+  bind_rows(Tulipierlength)
+```
+
+
+```{r cacul des longueurs}
+
+summary_mylenths <- My_lenths_prep %>%
+  rename(lengths_detail = length) %>% 
+  group_by(sp, num_indiv, orient) %>% 
+  summarise(Roots_length = sum(lengths_detail)) %>% 
+  ungroup()
+
+```
+
+```{r base lengths prete à la jointure}
+
+#renommer les colonnes communes, homogénéisation des codes :
+summary_mylenths <- summary_mylenths %>% 
+  rename(TreeID = num_indiv) %>%
+  rename(SampleID = orient) %>%
+  rename(OldVernacular = sp) %>%
+  mutate(SampleID = as.numeric(as.character(SampleID))) %>%
+  mutate(TreeID = recode(TreeID, "'1' = 'A' ; '2' = 'B'; '3' = 'C'; '4' = 'D'"))
+         
+summary_mylenths$OldVernacular <- trimws(summary_mylenths$OldVernacular,"r")
+
+#joindre à la base :
+Ourbase_mylengths <- Ourbase_N %>% 
+  left_join(summary_mylenths, by = c("OldVernacular", "TreeID", "SampleID")) %>% 
+  mutate(RSL = ifelse(is.na(RSL), Roots_length/Rootdryweight, RSL)) 
+
+Ourbase_mylengths$RSL <- round(Ourbase_mylengths$RSL, digits = 3) #3 decimales pour RSL
+
+```
+
+Calcul de Wood density avec le package BIOMASS (recalcul pour Marco)
+
+```{r Wood density}
+
+WD_data_details <- getWoodDensity(Our_new_taxo$genus, Our_new_taxo$species, family = Our_new_taxo$family, region = "World", verbose = TRUE)
+
+sum(WD_data_details$levelWD == "family") 
+sum(WD_data_details$levelWD == "genus") 
+sum(WD_data_details$nInd == "1") 
+sum(WD_data_details$nInd == "2") 
+
+#RESULTS :
+# 4 WD calculées au niveau de la famille 
+# 10 calculées au niveau du genre
+# 5 basées sur seulement 1 individu
+# 6 basées sur 2 individus
+
+WD_data <- WD_data_details %>% 
+  select(-family)
+
+#injecter ces valeurs dans ma BD
+
+Ourbase_WD <- Ourbase_mylengths %>%  #changer la base utilisée qd j'aurai les longueurs de rcaines
+  left_join(WD_data, by = c("genus","species"))
+
+```
+
+Bon petit nettoyage de la base maintenant !!
+
+```{r Nettoyage ourbase}
+
+Ourbase_clean <- Ourbase_WD %>%
+  left_join(New_verna_family, by = c("genus","species")) %>%
+  select(-DBH, -Family, -WD) %>%  #supprimer les colonnes ayant été acualisées 
+  mutate(Dispers = as.factor(as.numeric(Dispers))) %>% # var qualitatives ordinales
+  mutate(Deciduousness = as.factor(as.numeric(Deciduousness))) %>% 
+  mutate(SampleID = as.factor(as.numeric(SampleID))) %>% 
+  mutate(Filled = as.factor(as.numeric(Filled))) %>% 
+  #colonnes OldScientificName, Oldgenus, Oldspecies complétées :
+  mutate(OldScientificName = ifelse(is.na(OldScientificName), 
+                                    paste(Oldgenus, Oldspecies), #fct de base. Unite ça marche pas imbriqué
+                                    OldScientificName)) %>% 
+  separate("OldScientificName", sep = " ", into = c("Oldgenus", "Oldspecies"), remove = F) %>% 
+
+  #enlever les sp non échantilonnées finalement
+  filter(!(OldVernacular %in% c("Bape", "Okoue / polyglacea", "Akatio / delovoyi", "Losso", "NGavi a gros fruits", "Banaye / mehadelpha", "Tombo")))
+ 
+
+summary(Ourbase_clean)
+NAabond <- Ourbase_clean[is.na(Ourbase_clean$SPAD),]
+
+```
+
+Données brutes de Marco de dernière minute. A ajouter, avec la mesure de ses racines du coup (longueurs & surfaces)
+
+```{r données brutes manquantes Marco}
+
+rawmissingdataMarco <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Marco/roots computation.csv", 
+    "\t", escape_double = FALSE, col_types = cols(DryWeight = col_number(), 
+        FreshWeight = col_number()), locale = locale(decimal_mark = ","), 
+    trim_ws = TRUE)
+
+rawdata <- rawmissingdataMarco %>% 
+  select(SPECIES, treeID, sampleID, DryWeight, FreshWeight) %>% 
+  slice(-1) %>% 
+  rename(OldVernacular = SPECIES) %>% 
+  rename(TreeID = treeID) %>% 
+  rename(SampleID = sampleID) %>% 
+  rename(RootDryWeight = DryWeight) %>% 
+  rename(RootFreshWeight = FreshWeight) %>% 
+  mutate(SampleID = as.factor(as.numeric(SampleID)))
+
+rootsmassMarco <- Ourbase_clean %>% 
+  left_join(rawdata, by = c("OldVernacular", "TreeID", "SampleID")) %>%
+  mutate(Rootdryweight = ifelse(is.na(Rootdryweight), RootDryWeight, Rootdryweight)) %>%
+  mutate(Rootfreshweight = ifelse(is.na(Rootfreshweight), RootFreshWeight, Rootfreshweight)) %>% 
+  select(-RootFreshWeight, -RootDryWeight)
+
+NAtable <- rootsmassMarco[is.na(rootsmassMarco$Rootdryweight),]
+
+```
+
+Traitement de la BD des longueurs de racines de Marco (Taxonomie à recoder) :
+
+```{r Roots length Marco}
+
+Marco_lengths <- read_csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Roots/Roots scans Marco/Marco_lengths.csv", 
+    locale = locale(encoding = "latin1")) %>% 
+  select(image, length)
+
+#D'abord dissocier les codes des arbres de Téné (commence par une lettre) & de l'Inp (commence par un chiffre)
+
+INPsampl <- Marco_lengths %>% 
+  filter(grepl("^\\d", Marco_lengths$image)) %>%  #"^\\d" = commence par un chiffre
+  filter(!(image == "47A-KOTIBé.tif")) %>% #finalement samples non retenus
+  filter(!(image == "47B-KOTIBé.tif")) %>%
+  filter(!(image == "47C-KOTIBé.tif")) 
+
+
+TENEsampl <- Marco_lengths %>% 
+  filter(grepl("^[[:alpha:]]", Marco_lengths$image)) %>% 
+  filter(!(image == "FRAKé-C1.tif")) %>% #finalement samples non retenus
+  filter(!(image == "FRAKé-C2.tif")) %>%
+  filter(!(image == "FRAKé-C3.tif")) 
+
+
+
+#Maintenant on va traiter chaque code séparément :
+#Code de Téné:
+TENEsamplrecode <- TENEsampl %>%
+  separate(image, sep = "-",
+           into = c("sp", "ID"), 
+           remove = F) %>%
+  separate(image, sep = "_",
+           into = c("sp1", "ID1"), 
+           remove = F) %>% 
+  mutate(ID = ifelse(is.na(ID), ID1, ID)) %>%
+  mutate(sp = ifelse(is.na(ID1), sp, sp1)) %>% 
+  select(-image, -ID1, -sp1)
+
+TENEsamplrecode$ID <- trimws(TENEsamplrecode$ID,"l") #enlever l'espace à gauche (l)
+
+
+TENEsamplrecode <- TENEsamplrecode %>% 
+  mutate(ID2 = substr(ID, 1, 2)) %>%   #mettre les 2 1ers characters d'ID dans ID2
+  mutate(truc = substr(ID, 3, 6)) %>%  #enlever .tif
+  mutate(TreeID = substr(ID2, 1, 1)) %>% 
+  mutate(SampleID = substr(ID2, 2, 2)) %>% 
+  select(-ID2, -truc, -ID) %>% 
+  mutate(sp = tolower(sp)) %>% 
+  rename(OldVernacular = sp) %>% 
+  mutate(SampleID = as.factor(as.numeric(SampleID))) 
+
+TENEsamplrecode$OldVernacular <- trimws(TENEsamplrecode$OldVernacular,"both") #enlever l'espace à droite (r)
+
+#Code de l'INP :  
+#runner tous les blocks "INPsamplrecode" à chaque fois
+INPsamplrecode <- INPsampl %>% 
+  separate(image, sep = "-",
+           into = c("ID", "sp"), 
+           remove = F)
+INPsamplrecode <-INPsamplrecode %>% 
+  mutate(truc = StrRight(INPsamplrecode$sp,4)) %>% 
+  mutate(sp1 = StrLeft(INPsamplrecode$sp,-4)) %>% 
+  select(-image, -sp, -truc) %>% 
+  mutate(SampleID = StrRight(INPsamplrecode$ID,1)) %>% 
+  mutate(SampleID = recode(SampleID, "'A' = '1' ; 'B' = '2'; 'C' = '3'")) %>% 
+  mutate(TreeID = StrLeft(INPsamplrecode$ID,-1)) %>% 
+  mutate(sp1 = tolower(sp1))
+
+INPsamplrecode$sp1 <- trimws(INPsamplrecode$sp1, "both") #enlever l'espace de part&d'autre 
+
+INPsamplrecode1 <-INPsamplrecode %>% 
+mutate(sp1 = recode(sp1, "'formager' = 'fromager'")) %>% #pas oublier les guillemets autour
+  select(-ID) %>% 
+  rename(OldVernacular = sp1) %>% 
+  mutate(SampleID = as.factor(as.numeric(SampleID))) %>% 
+  mutate(TreeID = recode(TreeID, "'3(35)' = '35'")) %>% 
+  group_by(OldVernacular) %>% 
+  arrange(TreeID) 
+  
+  
+TreeIDrecode <- INPsamplrecode1 %>% 
+  select(TreeID) %>%
+  distinct() %>% 
+  group_by(OldVernacular) %>%
+  mutate(TreeID1 = c(1:n())) %>% 
+  mutate(TreeID1 = recode(TreeID1, "'1' = 'A' ; '2' = 'B'; '3' = 'C'")) %>% 
+  ungroup()
+
+
+INPsamplrecode2 <- INPsamplrecode1 %>% 
+  left_join(TreeIDrecode, by = c("OldVernacular", "TreeID")) %>% 
+  select(-TreeID) %>% 
+  rename(TreeID = TreeID1) %>%
+  mutate(TreeID = ifelse(OldVernacular == "fraké" & TreeID == "B", "C", TreeID))
+
+
+#Rejoindre les 2 codes traités séparément - adapter à la jointure :
+Lengthsrecode <- TENEsamplrecode %>% 
+  bind_rows(INPsamplrecode2) %>% 
+  mutate(OldVernacular = str_to_sentence(.$OldVernacular)) %>% 
+  arrange(OldVernacular) %>% 
+  mutate(OldVernacular = sub("é","e",.$OldVernacular)) %>% #enelever accent
+  mutate(OldVernacular = recode(OldVernacular, "'Frake'= 'Frake / Limba' ; 'Koace noliba' = 'Koace Noliba' ; 'Bi'= 'Bi ou Eyong'; 'Papaya' = 'Papayer' ; 'Pepe' = 'Pepe Angrouafou' ; 'Ouissou' = 'Ouossoupalie a fleurs mauves'"))
+
+Ourbase_Marcolength <- rootsmassMarco %>% 
+  left_join(Lengthsrecode)
+
+NAtable <- Ourbase_Marcolength[is.na(Ourbase_Marcolength$length),]
+
+```
+
+Traitement de la BD des surfaces de racines de Marco (Taxonomie à recoder) :
+
+```{r Roots area Marco}
+
+roots_area_Marco <- read_csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Roots/Roots scans Marco/Summary areas of Roots scans Marco.csv", 
+    locale = locale(encoding = "latin1")) %>% 
+  select(Slice, "Total Area")
+
+#D'abord dissocier les codes des arbres de Téné (commence par une lettre) & de l'Inp (commence par un chiffre)
+
+INPsamplarea <- roots_area_Marco %>% 
+  filter(grepl("^\\d", roots_area_Marco$Slice)) %>%  #"^\\d" = commence par un chiffre
+  filter(!(Slice == "47A-KOTIBé")) %>% #finalement samples non retenus
+  filter(!(Slice == "47B-KOTIBé")) %>%
+  filter(!(Slice == "47C-KOTIBé")) 
+
+
+TENEsamplarea <- roots_area_Marco %>% 
+  filter(grepl("^[[:alpha:]]", roots_area_Marco$Slice)) %>% 
+  filter(!(Slice == "FRAKé-C1")) %>% #finalement samples non retenus
+  filter(!(Slice == "FRAKé-C2")) %>%
+  filter(!(Slice == "FRAKé-C3")) 
+
+
+
+#Maintenant on va traiter chaque code séparément :
+#Code de Téné:
+TENEsamplrecodearea <- TENEsamplarea %>%
+  separate(Slice, sep = "-",
+           into = c("sp", "ID"), 
+           remove = F) %>%
+  separate(Slice, sep = "_",
+           into = c("sp1", "ID1"), 
+           remove = F) %>% 
+  mutate(ID = ifelse(is.na(ID), ID1, ID)) %>%
+  mutate(sp = ifelse(is.na(ID1), sp, sp1)) %>% 
+  select(-Slice, -ID1, -sp1)
+
+TENEsamplrecodearea$ID <- trimws(TENEsamplrecodearea$ID,"l") #enlever l'espace à gauche (l)
+
+
+TENEsamplrecodearea <- TENEsamplrecodearea %>% 
+  mutate(ID2 = substr(ID, 1, 2)) %>%   #mettre les 2 1ers characters d'ID dans ID2
+  mutate(truc = substr(ID, 3, 6)) %>%  #enlever .tif
+  mutate(TreeID = substr(ID2, 1, 1)) %>% 
+  mutate(SampleID = substr(ID2, 2, 2)) %>% 
+  select(-ID2, -truc, -ID) %>% 
+  mutate(sp = tolower(sp)) %>% 
+  rename(OldVernacular = sp) %>% 
+  mutate(SampleID = as.factor(as.numeric(SampleID))) 
+
+TENEsamplrecodearea$OldVernacular <- trimws(TENEsamplrecodearea$OldVernacular,"both") #enlever l'espace à droite (r)
+
+#Code de l'INP :  
+#runner tous les blocks "INPsamplrecode" à chaque fois
+INPsamplrecodearea <- INPsamplarea %>% 
+  separate(Slice, sep = "-",
+           into = c("ID", "sp"), 
+           remove = F)
+
+INPsamplrecodearea <-INPsamplrecodearea %>% 
+  mutate(truc = StrRight(INPsamplrecodearea$sp,4)) %>% 
+  select(-Slice, -truc) %>% 
+  mutate(SampleID = StrRight(INPsamplrecodearea$ID,1)) %>% 
+  mutate(SampleID = recode(SampleID, "'A' = '1' ; 'B' = '2'; 'C' = '3'")) %>% 
+  mutate(TreeID = StrLeft(INPsamplrecodearea$ID,-1)) %>% 
+  mutate(sp = tolower(sp))
+
+INPsamplrecodearea$sp <- trimws(INPsamplrecodearea$sp, "both") #enlever l'espace de part&d'autre 
+
+INPsamplrecodearea1 <-INPsamplrecodearea %>% 
+mutate(sp = recode(sp, "'formager' = 'fromager'")) %>% #pas oublier les guillemets autour
+  select(-ID) %>% 
+  rename(OldVernacular = sp) %>% 
+  mutate(SampleID = as.factor(as.numeric(SampleID))) %>% 
+  mutate(TreeID = recode(TreeID, "'3(35)' = '35'")) %>% 
+  group_by(OldVernacular) %>% 
+  arrange(TreeID) 
+  
+  
+TreeIDrecodearea <- INPsamplrecodearea1 %>% 
+  select(TreeID) %>%
+  distinct() %>% 
+  group_by(OldVernacular) %>%
+  mutate(TreeID1 = c(1:n())) %>% 
+  mutate(TreeID1 = recode(TreeID1, "'1' = 'A' ; '2' = 'B'; '3' = 'C'")) %>% 
+  ungroup()
+
+
+INPsamplrecodearea2 <- INPsamplrecodearea1 %>% 
+  left_join(TreeIDrecodearea, by = c("OldVernacular", "TreeID")) %>% 
+  select(-TreeID) %>% 
+  rename(TreeID = TreeID1) %>%
+  mutate(TreeID = ifelse(OldVernacular == "fraké" & TreeID == "B", "C", TreeID))
+
+
+#Rejoindre les 2 codes traités séparément - adapter à la jointure :
+Arearecode <- TENEsamplrecodearea %>% 
+  bind_rows(INPsamplrecodearea2) %>% 
+  mutate(OldVernacular = str_to_sentence(.$OldVernacular)) %>% 
+  arrange(OldVernacular) %>% 
+  mutate(OldVernacular = sub("é","e",.$OldVernacular)) %>% #enelever accent
+  mutate(OldVernacular = recode(OldVernacular, "'Frake'= 'Frake / Limba' ; 'Koace noliba' = 'Koace Noliba' ; 'Bi'= 'Bi ou Eyong'; 'Papaya' = 'Papayer' ; 'Pepe' = 'Pepe Angrouafou' ; 'Ouissou' = 'Ouossoupalie a fleurs mauves'"))
+
+Ourbase_MarcoArea <- Ourbase_Marcolength %>% 
+  left_join(Arearecode, by = c("OldVernacular", "TreeID", "SampleID"))
+
+NAtable <- Ourbase_MarcoArea[is.na(Ourbase_MarcoArea$length),]
+
+# Mettre longueurs et surfaces de Marco dans les colones dédiées :
+
+Ourbase_MarcoRoots <- Ourbase_MarcoArea %>% 
+  mutate(Roots_length = ifelse(is.na(Roots_length), length, Roots_length)) %>%
+  mutate(RootsArea = ifelse(is.na(RootsArea), `Total Area`, RootsArea)) %>% 
+  mutate(RSL = Roots_length/Rootdryweight) %>%
+  mutate(RSA = ifelse(is.na(RSA), RootsArea/Rootdryweight, RSA)) %>% 
+  mutate(RDMC = Rootdryweight/Rootfreshweight) %>%
+  select(-length, -`Total Area`) %>% 
+  mutate(SLA = round(Ourbase_MarcoRoots$SLA, digits = 4)) %>%
+  mutate(LDMC = round(Ourbase_MarcoRoots$LDMC, digits = 2))
+
+
+
+
+NAtable <- Ourbase_MarcoRoots[is.na(Ourbase_MarcoRoots$RSL),]
+ 
+NAtable <- Ourbase_MarcoRoots[is.na(Ourbase_MarcoRoots$RSA),]
+
+
+```
+
+
+Nous voulons approcher le plus possible de la valeur de WD specifique pour les sp dont WD a été calculé à partir de la moyenne des autres sp (dataset).
+
+Idée :
+Tester qui de "dataset" ou de "mice" se rapproche le plus de la valeur de l'espèce.
+
+Mice : package proposant une valeur en fonction des autres valeurs des autres variables, selon un arbre décisionel.
+
+Mais avant de faire un mice, vérifier :
+- la corrélation entre chaque trait quanti et WD -> sélectionner ceux corrélés
+- var quali : box-plot + Anova
+- le signal phylogénétique (family) de WD -> prendre family comme trait si signal
+
+Mise en place du Mice :
+- inclure les WD dans la base de traits
+- tirer aléatoirement des WD au niveau spécifique, et dont les autres traits ne comportent pas de NA
+- créer 3 tables identiques contenant ces données
+- la 1 ère gardera ces données (témoin)
+- la 2ème & la 3ème doivent avoir leur colonne WD vide (NA)
+- l'une sera remplie par la moyenne des WD des autres sp de la base de trait (la valeur au level "dataset")
+- l'autre sera remplie grace à mice.
+
+```{r tests de corrélation}
+# Une base de traits (quantitatifs) à tester :
+baseforcor <- Ourbase_MarcoRoots %>% 
+  select(-OldVernacular, -OldScientificName,-Oldgenus,-Oldspecies, -TreeID, -SampleID, -Filled, -field_name, -genus, -species, -sdWD, -levelWD, -nInd, -family, -N, -Operator, -Dispers, -Deciduousness) 
+
+#pas besoin de tester la normalité : n>30.
+CorMatrix1 <- round(cor(baseforcor, use = "pairwise.complete.obs"), digits = 2) # matrice de corrélation, avec 2 décimales
+
+CorMatrixS <- rcorr(as.matrix(baseforcor))
+CorMatrix <- CorMatrixS$r
+Pval_corr <- CorMatrixS$P
+
+# Plot de la matrice de corrélation :
+corrplot(CorMatrix, method="circle", type="lower", col=brewer.pal(n=8, name="PuOr"), tl.col="black", tl.srt=35, p.mat = Pval_corr, sig.level = 0.05) #avec une croix pour les p-value > 0.05.
+
+
+```
+
+
+-> Traits sélectionnés : petioleL, RSL, Freshweight, BarkTh,  LeafArea, SLA, Rootfreshweight, RootsArea (*à véirifier en ajoutant roots lengths*)
+
+Tester l'existence d'un lien entre WD avec les var quali.
+
+```{r test lien de WD avec les var quali}
+
+ggplot(data= Ourbase_WD_family, aes(x=Deciduousness, y=meanWD)) + geom_boxplot() +
+   geom_signif(comparisons = list(c("1", "1.5"), c("1", "2")), na.rm = T, test = "wilcox.test",
+               map_signif_level = TRUE, textsize=6) +
+  ylim(NA, 0.8) 
+
+boxplot(meanWD ~ Dispers, Ourbase_WD_family)
+boxplot(meanWD ~ Deciduousness, Ourbase_WD_family)
+boxplot(meanWD ~ family, Ourbase_WD_family)
+
+lm_WDDispers <- lm(meanWD ~ Dispers, Ourbase_WD_family)
+plot(lm_WDDispers)
+summary(lm_WDDispers)
+anova(lm_WDDispers) #pas d'effet
+
+lm_WDDecid <- lm(meanWD ~ Deciduousness, Ourbase_WD_family)
+plot(lm_WDDecid)
+summary(lm_WDDecid)
+anova(lm_WDDecid) #Effet fort (F-value = 21.441) et significatif (1.253e-09)
+
+lm_WDfamily <- lm(meanWD ~ family, Ourbase_WD_family)
+plot(lm_WDfamily)
+summary(lm_WDfamily)
+anova(lm_WDfamily) #Effet fort (F-value = 30.985) et significatif (< 2.2e-16)
+
+```
+
+
+

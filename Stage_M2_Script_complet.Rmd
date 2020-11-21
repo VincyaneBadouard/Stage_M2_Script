@@ -1,0 +1,2321 @@
+---
+title: "Stage_M2_Script_complet"
+author: "Vincyane Badouard"
+date: "16/07/2020"
+output: 
+  html_document:
+    toc: true
+    toc_float: yes
+---
+
+```{r ChunkOptions}
+knitr::opts_chunk$set(echo = T, message = F, warning = F, cache = T)
+```
+
+Necessary packages
+```{r Packages}
+library(tidyverse) 
+library(diffdf) #comparaison de base de données
+library(knitr)
+library(BIOMASS)
+library(vroom)
+library(polycor)
+library(corrplot)
+library(RColorBrewer)
+library(scales)
+library(Hmisc) #rcorr
+library(car)
+library(ggsignif)
+library(entropart) #divervity computation
+library(DescTools) #StrLeft, StrRight
+library(mice)
+library(FD)
+library(clue)
+library(phylobase) #subset phylogenies
+library(entropart)
+library(phytools) #V.PhyloMaker
+library(reshape2)
+library(egg) #ggarrange
+library(ggpubr)
+library(rstan)
+rstan_options(auto_write = TRUE) #option pour ne pas recompiler à chaque fois !!! gain de temps
+options(mc.cores = parallel::detectCores()) #option pour ajouter des coeurs au calcul
+library(bayesplot) #visualiser la chaine de Markov
+library(shinystan) #for interactive stan output visualization
+library(rstanarm) #for Bayesian automatic regression modelling using stan
+library(brms) #Bayesian generalized multivariate non-linear multilevel models using stan
+
+# esquisse::esquisser() #for plot creation
+```
+
+# Confection de la base de données de traits fonctionnels
+
+## Compléter la base de Marco avec quelques données en plus, dont SPAD
+
+Repartir de la base de données originale de Marco.
+
+```{r chargement de la base de donnees originale de Marco}
+
+Marco_raw <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Marco/data_FT.csv", ";", escape_double = FALSE, locale = locale(decimal_mark = ","), trim_ws = TRUE)
+
+#vérifier la présence des virgules
+```
+
+Charger la base de données post-terrain, contenant sa base complétée et la mienne.
+
+```{r Charger la base de donnees post-terrain}
+
+ DATABASE <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/DATABASE.csv", ";", escape_double = FALSE, locale = locale(decimal_mark = ","), trim_ws = TRUE)
+
+#vérifier la présence des virgules
+```
+
+Séparer la base de données post-terrain en 2 : celle de Marco & la mienne.
+
+```{r Séparation de la base de donnees post-terrain}
+Marco_field <- filter(DATABASE, Operator == "Marco")
+My_field <- filter(DATABASE, Operator == "Vincyane")
+
+```
+
+Joindre la colonne SPAD de la base Marco_terrain à Marco_raw
+
+```{r ajouter Spad a la base initiale de Marco}
+
+Marco_raw_rename <- Marco_raw %>% 
+  rename(Vernacular = Vernaculier) %>% 
+  rename(TreeID = treeID) %>%
+  rename(SampleID = sampleID) %>%
+  rename(genus = Genus, species = Species)
+
+  
+          
+spad <- Marco_field %>% 
+  select(Vernacular,TreeID, SampleID, SPAD)
+  
+Marco_raw_spad <- Marco_raw_rename %>% 
+  left_join(spad, by = c("Vernacular","TreeID", "SampleID"))
+
+```
+
+Compléter la BD originale de Marco par les données que je lui ai ajouté, se trouvant dans la BD post-terrain.
+
+```{r Completer BD originale de Marco}
+
+#on crée une boucle afin de réaliser le complétage de données par variable :
+
+All_traits <- c("BarkTh", "PetioleL",	"LeafThickness", "FreshWeight",	"DryWeight")
+
+Marco_completed <- Marco_raw_spad #créer une version à compléter
+
+for(trait in All_traits){ # Pour chaque valeur que peut prendre trait dans All_traits
+  which(is.na(Marco_completed[,trait])) -> rows #renvoyer les lignes 
+  Marco_completed [rows, trait] <- DATABASE [rows, trait]
+}
+
+
+diffdf(Marco_raw_spad,Marco_completed) #vérifier que la base a été complétée
+
+#créer une colonne "Filled" identifiant les lignes ayant reçu de nouvelles données cette année :
+Marco_completed$Filled <- Marco_completed$Filled <- 0 #on lui attribue 0 pour l'instant
+
+Marco_completed$Filled[88:90] <-Marco_completed$Filled[88:90] <- 1 
+Marco_completed$Filled[170] <-Marco_completed$Filled[170] <- 1 
+
+```
+
+Transformer les Leafarea de Marco de cm2 à mm2, ainsi que SLA
+
+```{r Leafarea & SLA de Marco de cm2 à mm2}
+
+Marco_modifmm2 <- Marco_completed %>% 
+  mutate(LeafArea= LeafArea*100) %>% 
+  mutate(SLA= SLA*100)
+
+
+```
+
+Enregistrer la BD de Marco actualisée.
+
+```{r BD de Marco}
+write.csv2(Marco_completed, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Marco_completed.csv")
+
+```
+
+*Maintenant je ne travaille que sur mon terrain perso. Je joindrai ma base à celle de Marco à la fin.*
+
+# Importer les mesures "logiciels" dans la base
+
+## Importer mes surfaces (mm2)
+
+### Feuilles
+
+```{r leaves base preparation}
+leaves_area <- read_csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Leaves/Summary of Leaves.csv")
+
+ #Manipulation de la table
+Tulipier <- leaves_area %>% #Cas du "tulipier du Gabon"
+  slice(360:375) %>% 
+  select(Slice,`Total Area`) %>% 
+  separate(Slice, sep = " ",
+           into = c("sp1", "sp2", "sp3","num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  unite(sp1, sp2, sp3, col = "sp", sep = " ") %>% #créer un colonne ac le nom complet de l'sp
+  mutate(orient = substr(orientation, 2, 2)) %>% #coller la lettre (orient) et l'id de l'image (image)
+  mutate(image = substr(orientation, 3, 3)) %>%
+  select(-Slice, -truc, -orientation) 
+
+
+leaves_area_prep <- leaves_area %>%
+  select(Slice,`Total Area`) %>% 
+  separate(Slice, sep = " ",
+           into = c("sp1", "sp2", "num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  mutate(truc = ifelse(is.na(truc), orientation, truc)) %>% #si truc = NA, = orientation, sinon laisser truc
+  mutate(orientation = ifelse(orientation == "001", num_indiv, orientation)) %>% 
+  mutate(num_indiv = ifelse(num_indiv == orientation, sp2, num_indiv)) %>% 
+  mutate(sp2 = ifelse(sp2 == num_indiv, "", sp2)) %>% 
+  unite(sp1, sp2, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% #prendre les 2 1ers characters d' orientation et les mettre dans orient
+  mutate(image = substr(orientation, 3, 3)) %>% #prendre le dernier character
+  select(-Slice, -truc, -orientation) %>% 
+  slice(1:359) %>% #enlever la partie tulipier
+  bind_rows(Tulipier)
+
+```
+
+
+```{r leaves area compute}
+
+details <- leaves_area_prep %>%
+  rename(Area = `Total Area`) %>% 
+  group_by(sp, num_indiv, orient) %>% #calculer la surface foliaire par sp, indiv et orient, additionnant ainsi les images a, b, c lorsqu'il y a.
+  mutate(Total_Area = sum(Area))
+#Là on a une surface par ligne, réétant ainsi la valeur sur a,b,c
+#Permettant de vérifier que le calcul a bien été réalisé
+
+summarise <- leaves_area_prep %>%
+  rename(Area = `Total Area`) %>% 
+  group_by(sp, num_indiv, orient) %>% 
+  summarise(Total_Area = sum(Area)) %>% 
+  ungroup() #emporter pour utiliser la base avec les varaiables déliées
+#Ici tableau final
+
+```
+
+
+```{r add at my general database}
+
+#renommer les colonnes communes, homogénéisation des codes :
+summarise <- summarise %>% 
+  rename(TreeID = num_indiv) %>%
+  rename(SampleID = orient) %>%
+  rename(Vernacular = sp) %>%
+  rename(Leaves_area = Total_Area) %>% 
+  mutate(SampleID = as.numeric(as.character(SampleID))) %>%
+  mutate(TreeID = recode(TreeID, "'1' = 'A' ; '2' = 'B'; '3' = 'C'; '4' = 'D'"))
+         
+summarise$Vernacular <- trimws(summarise$Vernacular,"r") #enlever l'espace à droite (r)
+
+#combiner les tables :
+Mybase_leafarea <- My_field %>% 
+  left_join(summarise, by = c("Vernacular", "TreeID", "SampleID"))
+
+Mybase_leafarea$LeafArea = Mybase_leafarea$Leaves_area #mettre les valeurs dans la colonne dédiée
+
+Mybase_leafarea <- Mybase_leafarea %>% 
+  select(-Leaves_area)
+
+```
+
+### Racines
+
+```{r roots base preparation}
+roots_area <- read_csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Roots/Treatments/Summary of Roots.csv")
+
+Tulipierroots <- roots_area %>% 
+  slice(255:263) %>% 
+  select(Slice,`Total Area`) %>% 
+  separate(Slice, sep = " ",
+           into = c("sp1", "sp2", "sp3","num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  unite(sp1, sp2, sp3, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% 
+  mutate(image = substr(orientation, 3, 3)) %>%
+  select(-Slice, -truc, -orientation) 
+
+
+roots_area_prep <- roots_area %>%
+  select(Slice,`Total Area`) %>% 
+  separate(Slice, sep = " ",
+           into = c("sp1", "sp2", "num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  mutate(truc = ifelse(is.na(truc), orientation, truc)) %>% #si truc = NA, = orientation, sinon laisser truc
+  mutate(orientation = ifelse(orientation == "001", num_indiv, orientation)) %>% 
+  mutate(num_indiv = ifelse(num_indiv == orientation, sp2, num_indiv)) %>% 
+  mutate(sp2 = ifelse(sp2 == num_indiv, "", sp2)) %>% 
+  unite(sp1, sp2, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% #prendre les 2 1ers characters d' orientation et les mettre dans orient
+  mutate(image = substr(orientation, 3, 3)) %>% #prendre le dernier character
+  select(-Slice, -truc, -orientation) %>% 
+  slice(1:254) %>% #enlever la partie tulipier
+  bind_rows(Tulipierroots)
+
+```
+
+```{r roots area compute}
+
+details_roots <- roots_area_prep %>%
+  rename(Area = `Total Area`) %>% 
+  group_by(sp, num_indiv, orient) %>% 
+  mutate(Total_Area = sum(Area))
+
+summary_roots <- roots_area_prep %>%
+  rename(Area = `Total Area`) %>% 
+  group_by(sp, num_indiv, orient) %>% 
+  summarise(Total_Area = sum(Area)) %>% 
+  ungroup()
+
+
+```
+
+```{r (roots) add at my general database}
+
+#renommer les colonnes communes, homogénéisation des codes :
+summary_roots <- summary_roots %>% 
+  rename(TreeID = num_indiv) %>%
+  rename(SampleID = orient) %>%
+  rename(Vernacular = sp) %>%
+  rename(RootsArea = Total_Area) %>% 
+  mutate(SampleID = as.numeric(as.character(SampleID))) %>%
+  mutate(TreeID = recode(TreeID, "'1' = 'A' ; '2' = 'B'; '3' = 'C'; '4' = 'D'"))
+         
+summary_roots$Vernacular <- trimws(summary_roots$Vernacular,"r")
+
+#combiner les tables :
+Mybase_areas <- Mybase_leafarea %>% 
+  left_join(summary_roots, by = c("Vernacular", "TreeID", "SampleID"))
+
+#Enlever les décimales comme Marco
+Mybase_areas$LeafArea <- format(Mybase_areas$LeafArea, digits = 0, scientific = F) #0 décimales
+
+```
+
+## Calculer LDMC & SLA 
+```{r LDMC, SLA compute}
+
+Mybase_areas$LeafArea <- as.numeric(Mybase_areas$LeafArea)
+Mybase_areas$RootsArea <- as.numeric(Mybase_areas$RootsArea)
+
+Mybase_computes <- Mybase_areas %>%
+  mutate(LDMC = DryWeight/FreshWeight) %>% #sec en mg, frais en g
+  mutate(SLA = LeafArea/DryWeight) %>% 
+  mutate(RSA = RootsArea/Rootdryweight) %>% 
+  mutate(SampleID = as.character(SampleID))
+
+write.csv2(Mybase_computes, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Mybase_computes.csv")
+  
+```
+
+# Mettre à jour la taxonomie botanique
+
+Rejoindre la base de Marco et la mienne
+
+```{r Marco + moi}
+
+#créer les colonnes manquantes à Marco 
+Marco_allcol <- Marco_modifmm2 
+Marco_allcol$Operator <- Marco_allcol$Operator <- "Marco" 
+
+
+
+together <- bind_rows(Marco_allcol, Mybase_computes) 
+
+Ourtraitsbase <- together %>% 
+  select(-27) %>% #enlever la colonne "?"
+  select(-"N", -"ID TRY") #supprimer les col qui servent plus à rien
+
+```
+
+Mettre à jour la taxonomie botanique
+
+```{r Taxo bota mise a jour}
+Data_Tene <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/data_final.csv",
+    ";", escape_double = FALSE, locale = locale(decimal_mark = ","),
+    trim_ws = TRUE)
+
+Data_Tene <- Data_Tene %>%
+  rename(genus = genus.y) %>%
+  rename(species = species.y)
+
+
+#ajouter une colonne avec les nouveaux noms vernaculaires
+
+New_verna <- Data_Tene %>%
+  select(genus, species, field_name) %>%
+  distinct() %>%
+  filter(!(field_name == "faux.cafeir")) %>%
+  filter(!(field_name =="ouokoue")) %>%
+  mutate(field_name = ifelse((genus == "Morelia"), "kamaia" , field_name))
+
+
+NewBota <- Ourtraitsbase %>%
+  left_join(New_verna, by = c("genus","species")) #reconnaissance par nom scientifique commun
+
+sum(is.na(NewBota$field_name)) #138 soit 15 sp non reconnues
+NAtable <- NewBota[is.na(NewBota$field_name),] #138 soit 15 sp non reconnues
+
+#Quand field_name = NA, lui attribuer la valeur dans Vernacular, tout en minuscule
+
+NewBota1 <- NewBota %>%
+  mutate(field_name = ifelse(is.na(field_name), tolower(Vernacular), field_name)) %>%
+  mutate(field_name = recode(field_name, "'banaye heudeloti' = 'banaye'; 'akossika' = 'akossika.petites.feuilles'; 'bi ou eyong' = 'bi'")) %>%
+# reccuperer le nom scientifique de ces espèces
+  rename(OldVernacular = Vernacular, Oldgenus = genus, Oldspecies = species, OldScientificName = ScientificName) %>%
+  left_join(New_verna, by = "field_name")  #créer Newgenus et Newspecies
+
+NAtable <- NewBota1[is.na(NewBota1$genus),]
+```
+
+# Calcul d'information dépendantes de la taxonomie
+
+## Calcul du DBH moyen par espèce
+
+```{r DBH moyen/sp}
+
+DBH_data_details <- Data_Tene %>% 
+  select(genus, species, dbh) %>% 
+  filter(!is.na(dbh)) %>% 
+  filter(!is.na(genus)) %>% 
+  group_by(genus, species) %>% 
+  mutate(MeanDBH = mean(dbh))
+
+DBH_data <- Data_Tene %>%  #DBH moyen par sp de tout Téné
+  select(genus, species, dbh) %>% 
+  filter(!is.na(dbh)) %>% 
+  filter(!is.na(genus)) %>% 
+  group_by(genus, species) %>% 
+  summarise(mean(dbh)) %>% 
+  rename(MeanDBH = "mean(dbh)")
+
+# L'ajouter à la base
+
+Ourbase_DBH <- NewBota1 %>% 
+  left_join(DBH_data, by = c("genus","species"))
+
+NAtable <- Ourbase_DBH[is.na(Ourbase_DBH$MeanDBH),]
+
+```
+
+## Calcul des abondances
+
+```{r Abondances}
+abond_sp <- Data_Tene %>% 
+  filter(!is.na(genus)) %>% 
+  group_by(genus,species) %>% #pour réaliser les opérations suivantes par groupes de modalités
+  summarise(N = n()) %>%  #créer une variable résumant les effectifs des éléments de "Vernacular"
+  arrange(desc(N)) %>% 
+  ungroup(genus, species)
+
+Ourbase_N <- Ourbase_DBH %>% 
+  left_join(abond_sp, by = c("genus","species"))
+
+NAtable <- Ourbase_N[is.na(Ourbase_N$N),]
+
+# Nos sp sont-elles les 50 sp les + abondantes ?
+
+#créer un vecteur commun contenant les noms scientifiques :
+abond_sctfic <- abond_sp %>% 
+  unite(genus, species, col = "ScientificName", sep = " ", remove = F) %>% 
+  left_join(New_verna, by = c("genus","species")) #pour ajouter les noms vernaculaires
+
+#ajouter family à la base :
+New_verna_family <- Data_Tene %>% #créer une table bota contenant family pour le join
+  select(genus, species, family) %>% 
+  distinct() 
+
+Our_new_taxo <- NewBota1 %>% 
+  select(genus, species) %>% 
+  mutate(genus = as.factor(as.character(genus))) %>%
+  mutate(species = as.factor(as.character(species))) %>% 
+  group_by(genus,species) %>% 
+  distinct(genus) %>% #enlever les lignes répétées
+  filter(!is.na(genus)) %>% 
+  unite(genus, species, col = "ScientificName", sep = " ", remove = F) %>% 
+  left_join(New_verna_family, by = c("genus","species")) 
+
+Most_abond <- abond_sctfic %>% 
+  slice(1:50) %>% #les 50 sp les + abondantes
+  filter(!(ScientificName %in% Our_new_taxo$ScientificName)) # 7 sp manques
+
+sp_ab_intru <- filter(Ourbase_N, N < 55) #les 7 sp de la base qui ne font pas parties des 50 les + abondantes 
+```
+
+# Ajouter les longueurs de racines à la base & calculer le RSL
+
+```{r Préparation de ma base de longueurs}
+
+My_lengths <- read_csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Roots/Treatments/results_length.csv")
+
+#caluler la longueur de l'orientation si ya des a,b
+
+Tulipierlength <- My_lengths %>% 
+  slice(255:263) %>% 
+  select(image, length) %>% 
+  separate(image, sep = " ",
+           into = c("sp1", "sp2", "sp3","num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  unite(sp1, sp2, sp3, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% 
+  mutate(picture = substr(orientation, 3, 3)) %>%
+  select(-image, -truc, -orientation) 
+
+
+My_lenths_prep <- My_lengths %>%
+  select(image, length) %>% 
+  separate(image, sep = " ",
+           into = c("sp1", "sp2", "num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  mutate(truc = ifelse(is.na(truc), orientation, truc)) %>% 
+  mutate(orientation = ifelse(orientation == "001.tif", num_indiv, orientation)) %>% 
+  mutate(num_indiv = ifelse(num_indiv == orientation, sp2, num_indiv)) %>% 
+  mutate(sp2 = ifelse(sp2 == num_indiv, "", sp2)) %>% 
+  unite(sp1, sp2, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% #prendre les 2 1ers characters d' orientation et les mettre dans orient
+  mutate(picture = substr(orientation, 3, 3)) %>% #prendre le dernier character
+  select(-image, -truc, -orientation) %>% 
+  slice(1:254) %>% #enlever la partie tulipier
+  bind_rows(Tulipierlength)
+```
+
+
+```{r cacul des longueurs}
+
+summary_mylenths <- My_lenths_prep %>%
+  rename(lengths_detail = length) %>% 
+  group_by(sp, num_indiv, orient) %>% 
+  summarise(Roots_length = sum(lengths_detail)) %>% 
+  ungroup()
+
+```
+
+```{r base lengths prete à la jointure}
+
+#renommer les colonnes communes, homogénéisation des codes :
+summary_mylenths <- summary_mylenths %>% 
+  rename(TreeID = num_indiv) %>%
+  rename(SampleID = orient) %>%
+  rename(OldVernacular = sp) %>%
+  mutate(SampleID = as.numeric(as.character(SampleID))) %>%
+  mutate(TreeID = recode(TreeID, "'1' = 'A' ; '2' = 'B'; '3' = 'C'; '4' = 'D'"))
+         
+summary_mylenths$OldVernacular <- trimws(summary_mylenths$OldVernacular,"r")
+
+#joindre à la base :
+Ourbase_mylengths <- Ourbase_N %>% 
+  left_join(summary_mylenths, by = c("OldVernacular", "TreeID", "SampleID")) %>% 
+  mutate(RSL = ifelse(is.na(RSL), Roots_length/Rootdryweight, RSL)) 
+
+Ourbase_mylengths$RSL <- round(Ourbase_mylengths$RSL, digits = 3) #3 decimales pour RSL
+
+```
+
+# Calcul de Wood density avec le package BIOMASS (recalcul pour Marco)
+
+```{r Wood density}
+
+WD_data_details <- getWoodDensity(Our_new_taxo$genus, Our_new_taxo$species, family = Our_new_taxo$family, region = "World", verbose = TRUE)
+
+sum(WD_data_details$levelWD == "family") 
+sum(WD_data_details$levelWD == "genus") 
+sum(WD_data_details$nInd == "1") 
+sum(WD_data_details$nInd == "2") 
+
+#RESULTS :
+# 4 WD calculées au niveau de la famille 
+# 10 calculées au niveau du genre
+# 5 basées sur seulement 1 individu
+# 6 basées sur 2 individus
+
+WD_data <- WD_data_details %>% 
+  select(-family)
+
+#injecter ces valeurs dans ma BD
+
+Ourbase_WD <- Ourbase_mylengths %>%  #changer la base utilisée qd j'aurai les longueurs de rcaines
+  left_join(WD_data, by = c("genus","species"))
+
+```
+
+# Bon petit nettoyage de la base maintenant !!
+
+```{r Nettoyageourbase}
+
+Ourbase_clean <- Ourbase_WD %>%
+  left_join(New_verna_family, by = c("genus","species")) %>%
+  select(-DBH, -Family, -WD) %>%  #supprimer les colonnes ayant été acualisées 
+  mutate(Dispers = as.factor(as.numeric(Dispers))) %>% # var qualitatives ordinales
+  mutate(Deciduousness = as.factor(as.numeric(Deciduousness))) %>% 
+  mutate(SampleID = as.factor(as.numeric(SampleID))) %>% 
+  mutate(Filled = as.factor(as.numeric(Filled))) %>% 
+  #colonnes OldScientificName, Oldgenus, Oldspecies complétées :
+  mutate(OldScientificName = ifelse(is.na(OldScientificName), 
+                                    paste(Oldgenus, Oldspecies), #fct de base. Unite ça marche pas imbriqué
+                                    OldScientificName)) %>% 
+  separate("OldScientificName", sep = " ", into = c("Oldgenus", "Oldspecies"), remove = F) %>% 
+
+  #enlever les sp non échantilonnées finalement
+  filter(!(OldVernacular %in% c("Bape", "Okoue / polyglacea", "Akatio / delovoyi", "Losso", "NGavi a gros fruits", "Banaye / mehadelpha", "Tombo")))
+ 
+NAabond <- Ourbase_clean[is.na(Ourbase_clean$SPAD),]
+
+```
+
+# Données brutes de Marco de dernière minute
+
+```{r données brutes manquantes Marco}
+
+rawmissingdataMarco <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Marco/roots computation.csv", 
+    "\t", escape_double = FALSE, col_types = cols(DryWeight = col_number(), 
+        FreshWeight = col_number()), locale = locale(decimal_mark = ","), 
+    trim_ws = TRUE)
+
+rawdata <- rawmissingdataMarco %>% 
+  select(SPECIES, treeID, sampleID, DryWeight, FreshWeight) %>% 
+  slice(-1) %>% 
+  rename(OldVernacular = SPECIES) %>% 
+  rename(TreeID = treeID) %>% 
+  rename(SampleID = sampleID) %>% 
+  rename(RootDryWeight = DryWeight) %>% 
+  rename(RootFreshWeight = FreshWeight) %>% 
+  mutate(SampleID = as.factor(as.numeric(SampleID)))
+
+rootsmassMarco <- Ourbase_clean %>% 
+  left_join(rawdata, by = c("OldVernacular", "TreeID", "SampleID")) %>%
+  mutate(Rootdryweight = ifelse(is.na(Rootdryweight), RootDryWeight, Rootdryweight)) %>%
+  mutate(Rootfreshweight = ifelse(is.na(Rootfreshweight), RootFreshWeight, Rootfreshweight)) %>% 
+  select(-RootFreshWeight, -RootDryWeight)
+
+NAtable <- rootsmassMarco[is.na(rootsmassMarco$Rootdryweight),]
+
+```
+
+# Mon traitement des racines de Marco (longueurs et surfaces)
+
+## Longueurs de racines de Marco
+
+Traitement de la BD des longueurs de racines de Marco (Taxonomie à recoder) :
+
+```{r Roots length Marco}
+
+Marco_lengths <- read_csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Roots/Roots scans Marco/Marco_lengths.csv", 
+    locale = locale(encoding = "latin1")) %>% 
+  select(image, length)
+
+#D'abord dissocier les codes des arbres de Téné (commence par une lettre) & de l'Inp (commence par un chiffre)
+
+INPsampl <- Marco_lengths %>% 
+  filter(grepl("^\\d", Marco_lengths$image)) %>%  #"^\\d" = commence par un chiffre
+  filter(!(image == "47A-KOTIBé.tif")) %>% #finalement samples non retenus
+  filter(!(image == "47B-KOTIBé.tif")) %>%
+  filter(!(image == "47C-KOTIBé.tif")) 
+
+
+TENEsampl <- Marco_lengths %>% 
+  filter(grepl("^[[:alpha:]]", Marco_lengths$image)) %>% 
+  filter(!(image == "FRAKé-C1.tif")) %>% #finalement samples non retenus
+  filter(!(image == "FRAKé-C2.tif")) %>%
+  filter(!(image == "FRAKé-C3.tif")) 
+
+
+
+#Maintenant on va traiter chaque code séparément :
+#Code de Téné:
+TENEsamplrecode <- TENEsampl %>%
+  separate(image, sep = "-",
+           into = c("sp", "ID"), 
+           remove = F) %>%
+  separate(image, sep = "_",
+           into = c("sp1", "ID1"), 
+           remove = F) %>% 
+  mutate(ID = ifelse(is.na(ID), ID1, ID)) %>%
+  mutate(sp = ifelse(is.na(ID1), sp, sp1)) %>% 
+  select(-image, -ID1, -sp1)
+
+TENEsamplrecode$ID <- trimws(TENEsamplrecode$ID,"l") #enlever l'espace à gauche (l)
+
+
+TENEsamplrecode <- TENEsamplrecode %>% 
+  mutate(ID2 = substr(ID, 1, 2)) %>%   #mettre les 2 1ers characters d'ID dans ID2
+  mutate(truc = substr(ID, 3, 6)) %>%  #enlever .tif
+  mutate(TreeID = substr(ID2, 1, 1)) %>% 
+  mutate(SampleID = substr(ID2, 2, 2)) %>% 
+  select(-ID2, -truc, -ID) %>% 
+  mutate(sp = tolower(sp)) %>% 
+  rename(OldVernacular = sp) %>% 
+  mutate(SampleID = as.factor(as.numeric(SampleID))) 
+
+TENEsamplrecode$OldVernacular <- trimws(TENEsamplrecode$OldVernacular,"both") #enlever l'espace à droite (r)
+
+#Code de l'INP :  
+#runner tous les blocks "INPsamplrecode" à chaque fois
+INPsamplrecode <- INPsampl %>% 
+  separate(image, sep = "-",
+           into = c("ID", "sp"), 
+           remove = F)
+INPsamplrecode <-INPsamplrecode %>% 
+  mutate(truc = StrRight(INPsamplrecode$sp,4)) %>% 
+  mutate(sp1 = StrLeft(INPsamplrecode$sp,-4)) %>% 
+  select(-image, -sp, -truc) %>% 
+  mutate(SampleID = StrRight(INPsamplrecode$ID,1)) %>% 
+  mutate(SampleID = recode(SampleID, "'A' = '1' ; 'B' = '2'; 'C' = '3'")) %>% 
+  mutate(TreeID = StrLeft(INPsamplrecode$ID,-1)) %>% 
+  mutate(sp1 = tolower(sp1))
+
+INPsamplrecode$sp1 <- trimws(INPsamplrecode$sp1, "both") #enlever l'espace de part&d'autre 
+
+INPsamplrecode1 <-INPsamplrecode %>% 
+mutate(sp1 = recode(sp1, "'formager' = 'fromager'")) %>% #pas oublier les guillemets autour
+  select(-ID) %>% 
+  rename(OldVernacular = sp1) %>% 
+  mutate(SampleID = as.factor(as.numeric(SampleID))) %>% 
+  mutate(TreeID = recode(TreeID, "'3(35)' = '35'")) %>% 
+  group_by(OldVernacular) %>% 
+  arrange(TreeID) 
+  
+  
+TreeIDrecode <- INPsamplrecode1 %>% 
+  select(TreeID) %>%
+  distinct() %>% 
+  group_by(OldVernacular) %>%
+  mutate(TreeID1 = c(1:n())) %>% 
+  mutate(TreeID1 = recode(TreeID1, "'1' = 'A' ; '2' = 'B'; '3' = 'C'")) %>% 
+  ungroup()
+
+
+INPsamplrecode2 <- INPsamplrecode1 %>% 
+  left_join(TreeIDrecode, by = c("OldVernacular", "TreeID")) %>% 
+  select(-TreeID) %>% 
+  rename(TreeID = TreeID1) %>%
+  mutate(TreeID = ifelse(OldVernacular == "fraké" & TreeID == "B", "C", TreeID))
+
+
+#Rejoindre les 2 codes traités séparément - adapter à la jointure :
+Lengthsrecode <- TENEsamplrecode %>% 
+  bind_rows(INPsamplrecode2) %>% 
+  mutate(OldVernacular = str_to_sentence(.$OldVernacular)) %>% 
+  arrange(OldVernacular) %>% 
+  mutate(OldVernacular = sub("é","e",.$OldVernacular)) %>% #enelever accent
+  mutate(OldVernacular = recode(OldVernacular, "'Frake'= 'Frake / Limba' ; 'Koace noliba' = 'Koace Noliba' ; 'Bi'= 'Bi ou Eyong'; 'Papaya' = 'Papayer' ; 'Pepe' = 'Pepe Angrouafou' ; 'Ouissou' = 'Ouossoupalie a fleurs mauves'"))
+
+Ourbase_Marcolength <- rootsmassMarco %>% 
+  left_join(Lengthsrecode)
+
+NAtable <- Ourbase_Marcolength[is.na(Ourbase_Marcolength$length),]
+
+```
+
+## Surfaces de racine de Marco
+
+Traitement de la BD des surfaces de racines de Marco (Taxonomie à recoder) :
+
+```{r Roots area Marco}
+
+roots_area_Marco <- read_csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Roots/Roots scans Marco/Summary areas of Roots scans Marco.csv", 
+    locale = locale(encoding = "latin1")) %>% 
+  select(Slice, "Total Area")
+
+#D'abord dissocier les codes des arbres de Téné (commence par une lettre) & de l'Inp (commence par un chiffre)
+
+INPsamplarea <- roots_area_Marco %>% 
+  filter(grepl("^\\d", roots_area_Marco$Slice)) %>%  #"^\\d" = commence par un chiffre
+  filter(!(Slice == "47A-KOTIBé")) %>% #finalement samples non retenus
+  filter(!(Slice == "47B-KOTIBé")) %>%
+  filter(!(Slice == "47C-KOTIBé")) 
+
+
+TENEsamplarea <- roots_area_Marco %>% 
+  filter(grepl("^[[:alpha:]]", roots_area_Marco$Slice)) %>% 
+  filter(!(Slice == "FRAKé-C1")) %>% #finalement samples non retenus
+  filter(!(Slice == "FRAKé-C2")) %>%
+  filter(!(Slice == "FRAKé-C3")) 
+
+
+
+#Maintenant on va traiter chaque code séparément :
+#Code de Téné:
+TENEsamplrecodearea <- TENEsamplarea %>%
+  separate(Slice, sep = "-",
+           into = c("sp", "ID"), 
+           remove = F) %>%
+  separate(Slice, sep = "_",
+           into = c("sp1", "ID1"), 
+           remove = F) %>% 
+  mutate(ID = ifelse(is.na(ID), ID1, ID)) %>%
+  mutate(sp = ifelse(is.na(ID1), sp, sp1)) %>% 
+  select(-Slice, -ID1, -sp1)
+
+TENEsamplrecodearea$ID <- trimws(TENEsamplrecodearea$ID,"l") #enlever l'espace à gauche (l)
+
+
+TENEsamplrecodearea <- TENEsamplrecodearea %>% 
+  mutate(ID2 = substr(ID, 1, 2)) %>%   #mettre les 2 1ers characters d'ID dans ID2
+  mutate(truc = substr(ID, 3, 6)) %>%  #enlever .tif
+  mutate(TreeID = substr(ID2, 1, 1)) %>% 
+  mutate(SampleID = substr(ID2, 2, 2)) %>% 
+  select(-ID2, -truc, -ID) %>% 
+  mutate(sp = tolower(sp)) %>% 
+  rename(OldVernacular = sp) %>% 
+  mutate(SampleID = as.factor(as.numeric(SampleID))) 
+
+TENEsamplrecodearea$OldVernacular <- trimws(TENEsamplrecodearea$OldVernacular,"both") #enlever l'espace à droite (r)
+
+#Code de l'INP :  
+#runner tous les blocks "INPsamplrecode" à chaque fois
+INPsamplrecodearea <- INPsamplarea %>% 
+  separate(Slice, sep = "-",
+           into = c("ID", "sp"), 
+           remove = F)
+
+INPsamplrecodearea <-INPsamplrecodearea %>% 
+  mutate(truc = StrRight(INPsamplrecodearea$sp,4)) %>% 
+  select(-Slice, -truc) %>% 
+  mutate(SampleID = StrRight(INPsamplrecodearea$ID,1)) %>% 
+  mutate(SampleID = recode(SampleID, "'A' = '1' ; 'B' = '2'; 'C' = '3'")) %>% 
+  mutate(TreeID = StrLeft(INPsamplrecodearea$ID,-1)) %>% 
+  mutate(sp = tolower(sp))
+
+INPsamplrecodearea$sp <- trimws(INPsamplrecodearea$sp, "both") #enlever l'espace de part&d'autre 
+
+INPsamplrecodearea1 <-INPsamplrecodearea %>% 
+mutate(sp = recode(sp, "'formager' = 'fromager'")) %>% #pas oublier les guillemets autour
+  select(-ID) %>% 
+  rename(OldVernacular = sp) %>% 
+  mutate(SampleID = as.factor(as.numeric(SampleID))) %>% 
+  mutate(TreeID = recode(TreeID, "'3(35)' = '35'")) %>% 
+  group_by(OldVernacular) %>% 
+  arrange(TreeID) 
+  
+  
+TreeIDrecodearea <- INPsamplrecodearea1 %>% 
+  select(TreeID) %>%
+  distinct() %>% 
+  group_by(OldVernacular) %>%
+  mutate(TreeID1 = c(1:n())) %>% 
+  mutate(TreeID1 = recode(TreeID1, "'1' = 'A' ; '2' = 'B'; '3' = 'C'")) %>% 
+  ungroup()
+
+
+INPsamplrecodearea2 <- INPsamplrecodearea1 %>% 
+  left_join(TreeIDrecodearea, by = c("OldVernacular", "TreeID")) %>% 
+  select(-TreeID) %>% 
+  rename(TreeID = TreeID1) %>%
+  mutate(TreeID = ifelse(OldVernacular == "fraké" & TreeID == "B", "C", TreeID))
+
+
+#Rejoindre les 2 codes traités séparément - adapter à la jointure :
+Arearecode <- TENEsamplrecodearea %>% 
+  bind_rows(INPsamplrecodearea2) %>% 
+  mutate(OldVernacular = str_to_sentence(.$OldVernacular)) %>% 
+  arrange(OldVernacular) %>% 
+  mutate(OldVernacular = sub("é","e",.$OldVernacular)) %>% #enelever accent
+  mutate(OldVernacular = recode(OldVernacular, "'Frake'= 'Frake / Limba' ; 'Koace noliba' = 'Koace Noliba' ; 'Bi'= 'Bi ou Eyong'; 'Papaya' = 'Papayer' ; 'Pepe' = 'Pepe Angrouafou' ; 'Ouissou' = 'Ouossoupalie a fleurs mauves'"))
+
+Ourbase_MarcoArea <- Ourbase_Marcolength %>% 
+  left_join(Arearecode, by = c("OldVernacular", "TreeID", "SampleID"))
+
+NAtable <- Ourbase_MarcoArea[is.na(Ourbase_MarcoArea$length),]
+
+# Mettre longueurs et surfaces de Marco dans les colones dédiées :
+
+Ourbase_MarcoRoots <- Ourbase_MarcoArea %>% 
+  mutate(Roots_length = ifelse(is.na(Roots_length), length, Roots_length)) %>%
+  mutate(RootsArea = ifelse(is.na(RootsArea), `Total Area`, RootsArea)) %>% 
+  mutate(RSL = Roots_length/Rootdryweight) %>%
+  mutate(RSA = ifelse(is.na(RSA), RootsArea/Rootdryweight, RSA)) %>% 
+  mutate(RDMC = Rootdryweight/Rootfreshweight) %>%
+  mutate(SLA = LeafArea/DryWeight) %>% 
+  select(-length, -`Total Area`)
+Ourbase_MarcoRoots <-Ourbase_MarcoRoots %>% 
+  mutate(LDMC = round(LDMC, digits = 2))
+
+
+NAtable <- Ourbase_MarcoRoots[is.na(Ourbase_MarcoRoots$RSL),]
+ 
+NAtable <- Ourbase_MarcoRoots[is.na(Ourbase_MarcoRoots$RSA),]
+
+```
+
+Enregistrer la base de traits finale 
+
+```{r base de traits finale}
+write.csv2(Ourbase_MarcoRoots, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Traits_base_complete.csv")
+
+```
+
+
+```{r tests de corrélation}
+# Une base de traits (quantitatifs) à tester :
+baseforcor <- Ourbase_MarcoRoots %>% 
+  select(-OldVernacular, -OldScientificName,-Oldgenus,-Oldspecies, -TreeID, -SampleID, -Filled, -field_name, -genus, -species, -sdWD, -levelWD, -nInd, -family, -N, -Operator, -Dispers, -Deciduousness) 
+
+#pas besoin de tester la normalité : n>30.
+CorMatrix1 <- round(cor(baseforcor, use = "pairwise.complete.obs"), digits = 2) # matrice de corrélation, avec 2 décimales
+
+CorMatrixS <- rcorr(as.matrix(baseforcor))
+CorMatrix <- CorMatrixS$r
+Pval_corr <- CorMatrixS$P
+
+# Plot de la matrice de corrélation :
+corrplot(CorMatrix, method="circle", type="lower", col=brewer.pal(n=8, name="PuOr"), tl.col="black", tl.srt=35, p.mat = Pval_corr, sig.level = 0.05) #avec une croix pour les p-value > 0.05.
+
+```
+
+Inter, intra specific & intra individual variations
+```{r Inter, intra specific, intra individual variations}
+library(FinCal)
+
+# Intra specific
+Intraspe_means <- Ourbase_MarcoRoots %>% 
+  select(field_name ,PetioleL,LeafThickness,LDMC,SLA,MeanDBH,meanWD,BarkTh,RDMC,RSL,RSA,Dispers,Deciduousness,SPAD) %>% 
+  group_by(field_name) %>% 
+  mutate_if(is.numeric, mean) %>% 
+  ungroup() %>% 
+  distinct()
+
+Intraspe_sd <- Ourbase_MarcoRoots %>% 
+  select(field_name ,PetioleL,LeafThickness,LDMC,SLA,MeanDBH,meanWD,BarkTh,RDMC,RSL,RSA,Dispers,Deciduousness,SPAD) %>% 
+  group_by(field_name) %>% 
+  mutate_if(is.numeric, sd)%>% 
+  ungroup() %>% 
+  distinct()
+
+Intraspe <- Intraspe_means %>% 
+  left_join(Intraspe_sd, by = "field_name",suffix=c(".mean",".sd"),)
+  
+ mean(mapply(function(X,Y) {
+  coefficient.variation(X, Y) #sd, avg
+  }, X=Intraspe$SPAD.sd, Y=Intraspe$SPAD.mean, SIMPLIFY = T), na.rm = T)
+ 
+# Inter specific
+coefficient.variation(sd(Ourbase_MarcoRoots$SPAD, na.rm = T), mean(Ourbase_MarcoRoots$SPAD, na.rm = T)) #sd, avg
+ 
+# apply(., 2, mean)
+# coefficient.variation(sd(), mean())
+# mutate_if(is.numeric, mean) %>% 
+#   ungroup() %>% 
+#   distinct()
+```
+
+
+# Diversity indices calculation
+## Calculation of functional diversity indices
+
+https://daijiang.name/en/2014/05/11/functional-diversity-in-r/
+
+0) Complete missing values with *MICE*
+*Remove covariants sp (Cedrela) or sp biasing (papaya) before distances matrix computation!*
+1) Take only traits
+2) Compute species mean of each trait
+3) Standardize all the traits (*scale()*) because their units are different
+4) Obtain a dissimilarity matrix *for quanti & quali variables* : Gower method (*gowdis()*) 
+5) Create a dendrogram (*hclust()*)
+  - choose the agglomeration method to compute it (UPGMA) (ou tt faire et calculer leur Norme2 (pas corrélation cophénétique)
+6) Test if it's utrametric & binary or force to be
+7) Create a list of species composition table of all the plots (with only the species present in the traits base or not) 
+8) Create a subset of this tree for each plot according to its species composition
+9)Compute functional diversity indices
+
+
+### Traits base preparation to compute diversity
+
+Remove NA : No mesured species + MICE
+```{r Remove NA in the traits base}
+
+Traitsbase <- Ourbase_MarcoRoots %>% 
+filter(!(OldVernacular == "Ouossoupalie a fleurs mauves" & TreeID == "C")) %>% 
+  select(-'RootAverageLenght', -'Filled', -'Operator')
+
+methods(mice)
+# methods used by this package are:
+# PMM (Predictive Mean Matching)  – For numeric variables
+# logreg(Logistic Regression) – For Binary Variables( with 2 levels)
+# polyreg(Bayesian polytomous regression) – For Factor Variables (unordered levels >= 2)
+# Proportional odds model (ordered, >= 2 levels)
+
+# 2 variables with NA's :
+# - Deciduousness -> 'polyreg' method
+# - SPAD -> 'PMM' method
+
+
+
+MICEinf <- mice(Traitsbase, maxit=100) #to use 100 iterations for each imputed dataset
+MICEinf$imp$SPAD
+MICEinf$imp$Deciduousness
+Traitsbase_completed <- complete(MICEinf,5) #put these infered values in our dataset. We take the fifth estimation.
+
+```
+
+Only species average traits
+```{r Only species average traits}
+
+Traitsbase_means <- Traitsbase_completed %>%
+  select(genus,species,PetioleL,LeafThickness,LDMC,SLA,MeanDBH,meanWD,BarkTh,RDMC,RSL,Dispers,Deciduousness,SPAD) %>% #finalement je ne prends pas le RSA car moins pertinent que le RSL
+  filter(!(genus == "Cedrela")) %>% #Remove Cedrela of the response variable because it will be a covariant
+  filter(!(species == "papaya")) %>% #remove papaya because it biases indices by its high weight (strong fctnal signature) (before distances matrix!)
+  unite(genus, species, col = "ScientificName", sep = " ", remove = T) %>%
+  group_by(ScientificName) %>%
+  mutate_if(is.numeric, mean) %>% 
+  ungroup() %>% 
+  distinct()
+#13 traits, 48 species
+
+write.csv2(Traitsbase_means, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Traitsbase_fordiversity.csv")
+
+```
+
+### Distance matrix & dendrogram
+
+Obtain a distance matrix
+```{r Obtain a distance matrix}
+
+#Standardize numeric traits
+Traitsbase_stand <- Traitsbase_means %>% 
+  mutate_if(is.numeric,
+            funs(as.vector(scale(.)))) %>% 
+  column_to_rownames(., var = "ScientificName") #put species name in the column "rownames"
+
+DistMatrix <- gowdis(Traitsbase_stand)
+#Gower for quanti & quali variables
+
+```
+
+Create a dendrogram (utrametric)
+```{r Create a dendrogram (utrametric)}
+
+
+FctDendrogram <-hclust(DistMatrix, method = "average")
+# UPGMA : arithmetical average
+plot(FctDendrogram, main="Functional dendrogram")
+
+UltrametricMatrix <- cophenetic(FctDendrogram)
+
+#Norme 2
+plot(DistMatrix,UltrametricMatrix,xlim=c(0,max(DistMatrix,UltrametricMatrix)), ylim=c(0,max(DistMatrix,UltrametricMatrix)),main="U-lien moyen vs D" )
+abline(a=0, b=1, col = 3)
+nc=round(cl_dissimilarity(DistMatrix, UltrametricMatrix, method = "spectral"),2)
+text(0.43, 0.1, "norme 2 =")
+text(0.5, 0.1, nc)
+
+class(FctDendrogram) #it is an object of "hclust" class
+FctDendrogram <- as.phylo(FctDendrogram)#transform in "phylo class" for some following functions
+is.ultrametric(FctDendrogram) #It's an ultrametric tree
+is.binary.tree(FctDendrogram) #It's a binary tree
+plot(FctDendrogram, main="Functional utrametric tree without Cedrela & papaya")
+
+FctDendrogram_phylo4 <- as(FctDendrogram, "phylo4")#transform in "phylo4 class" for "subset" functions
+
+```
+
+A tree for each plot
+```{r a tree for each plot}
+
+# Create a vector with only species in the functional dendrogram (without Cedrela & papaya):
+DendogramSpecies <- Traitsbase_means$ScientificName
+
+# list with a table for each plot : 
+datafctnaltree <- Data_Tene %>% #species composition table for each plot
+  select(genus, species, family, plot) %>% 
+  distinct() %>% 
+  filter(!is.na(genus)) %>% #remove non-identified species
+  unite(genus, species, col = "ScientificName", sep = " ", remove = F) %>% 
+  unite(genus, species, col = "Scientific_Name", sep = " ", remove = F) %>% 
+  filter(ScientificName %in% DendogramSpecies) #only sp present in my fctnal traits dataframe, without Cedrela & papaya
+
+#create a list with a table for each plot :
+datafctnaltreelist <- split(datafctnaltree, datafctnaltree$plot)
+
+datafctnaltreelist <- lapply(datafctnaltreelist, function(element) column_to_rownames(element, var = "Scientific_Name"))  #put species name in the column "rownames" for 'subset' function
+
+
+#a dendrogram for each plot :
+fctnalTreeperplot <- lapply(datafctnaltreelist, function(element) subset(FctDendrogram_phylo4, tips.include = element$ScientificName))
+save(fctnalTreeperplot, file = "fctnalTreeperplot.Rdata")
+# load("fctnalTreeperplot.Rdata")
+
+
+```
+
+Functional diversity indices computation
+```{r Functional diversity indices computation}
+
+# Abondances vector for all plots :
+abondperplot <- Data_Tene %>% 
+  filter(!is.na(genus)) %>% #remove non-identified species
+  group_by(genus, species, plot) %>% #by species & plot
+  summarise(N = n()) %>%  #abundances
+  arrange(plot, desc(N)) %>% 
+  ungroup(genus, species) %>% 
+  filter(!(genus == "Cedrela")) %>% #Remove Cedrela of the response variable because it will be a covariant
+  unite(genus, species, col = "ScientificName", sep = " ", remove = T)
+
+#create a list with a table for each plot :
+abondplotslist <- split(abondperplot, abondperplot$plot) #separate database under a factor
+
+#understand this list :
+# class(abondplotslist) #it's a list
+# str(abondplotslist,1) #25 tables
+
+# For fctnal diversity specificly (dendrogram species = abondances vector species) :
+ # Abondances vector 
+abondperplotofdendro <- abondperplot %>% 
+  filter(ScientificName %in% DendogramSpecies)#only sp present in my fctnal traits dataframe, without Cedrela & papaya
+
+ #list for "rao" function (dendrogram species = abondances vector species)
+abondperplotofdendrolist <- split(abondperplotofdendro, abondperplotofdendro$plot)
+
+
+
+# 'bcPhyloDiversity' function necessites a 'NAMED VECTOR' as species abundances numeric vector (non specified in R help's function) :
+
+
+# Species abundances numeric NAMED vector
+Namedvector_fctnofdendro <- lapply(abondperplotofdendrolist,
+                      function(element){
+                         Namedvector_fctnofdendro <- element$N   # operation1
+                         names(Namedvector_fctnofdendro) <- element$ScientificName # operation2
+                         return(Namedvector_fctnofdendro) # préciser ce que la fonction doit renvoyer
+})
+
+fctnalTreeperplot <- lapply(fctnalTreeperplot, function(element) as(element, "phylo"))#transform in "phylo class" to compute diversity indices
+
+# 'bcPhyloDiversity' function version :
+DivFctnal_Shann <- mapply(function(X,Y) {
+  bcPhyloDiversity(Ns = X,
+                   Tree = Y,
+                   q = 1, Normalize = T,
+                   Correction = "Best", CheckArguments = T)
+  }, X=Namedvector_fctnofdendro, Y=fctnalTreeperplot, SIMPLIFY = F) #SIMPLIFY = F : laisse la structure initiale de la liste (par plot dans ce cas)
+
+DivFctnal_Shann_values <- lapply(DivFctnal_Shann, getElement, "Total")#extraction de la valeur (Total) de l'indice grace à la fonction "getElement"(='$')
+
+# 'bcRao' (Simpson) function version :
+DivFctnal_Shann_Rao <- mapply(function(X,Y) {
+  bcRao(Ns = X,
+        Tree = Y,
+        Correction = "Lande", CheckArguments = T) #"Lande", the default value (equivalent to "Best")
+  }, X = Namedvector_fctnofdendro, Y = fctnalTreeperplot, SIMPLIFY = F)
+
+```
+
+Put values in a table
+```{r Put fctnal values in a table}
+#'bcPhyloDiversity' function
+Diversitytable_fctnalshan <- DivFctnal_Shann_values %>% 
+  as_tibble(.) %>% 
+  t() %>% #transpose romws & columns
+  as.tibble(.) %>%
+  rownames_to_column(var= "plot") %>% 
+  rename(DivFctnal_Shann=V1)
+
+# 'bcRao' (Simpson) function
+Diversitytable_fctnalshanRao <- DivFctnal_Shann_Rao %>% 
+  as_tibble(.) %>% 
+  t() %>% #transpose romws & columns
+  as.tibble(.) %>%
+  rownames_to_column(var= "plot") %>% 
+  rename(DivFctnal_Rao=V1)
+
+```
+
+## Calculation of taxonomic diversity indices
+
+Taxonomic diversity indices computation
+```{r Taxonomic diversity indices computation}
+
+# For plot 1 : 
+bcDiversity(abondplotslist$`1`$N, q = 1, Correction = "Best", CheckArguments = T) #in the a list we take N column of the table 1
+
+# Now for each plot :
+##Loop method :
+DivTaxo_Shann <- abondplotslist #create an object of the list size
+
+for(p in 1:length(abondplotslist)){  #loop for all p from 1 to the lenght of the list (= plots number)
+  DivTaxo_Shann[[p]] <- bcDiversity(abondplotslist[[p]]$N, q = 1, Correction = "Best", CheckArguments = T)
+unlist(DivTaxo_Shann)# for that is not a list
+}
+
+class(unlist(DivTaxo_Shann)) #numeric
+
+#Function method :
+DivTaxo_Shann <- lapply(abondplotslist, function(element) bcDiversity(element$N, q = 1, Correction = "Best", CheckArguments = T))
+
+
+# Shannon (q=1)
+# Bias coorection : "Best" = "UnveilJ" : jacknife unveiled by Marcon(2015). Database specific. 
+# element$N : abondances per plot (numeric vector)
+
+```
+
+Put values in a table
+```{r Put taxo values in a table}
+Diversitytable_taxshan <- DivTaxo_Shann %>% 
+  as.tibble(.) %>% 
+  t() %>% #transpose romws & columns
+  as.tibble(.) %>%
+  rownames_to_column(var= "plot") %>% 
+  rename(DivTaxo_Shann=V1)
+
+summary(Diversitytable_taxshan)
+```
+
+## Calculation of phylogenetic diversity indices
+
+Mes données :
+Doivent contenir ces colonnes:
+* species : nom sciencifique (genre+sp)
+* genus
+* family
+
+### Mes données
+```{r My data}
+
+#exemple fourni par la fonction :
+example <-read.csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Biblio/V.PhyloMaker_Rfunction/example.splist.csv",header=T)
+
+dataphylotree <- New_verna_family %>% 
+  filter(!is.na(genus)) %>% #remove non-identified species
+  unite(genus, species, col = "ScientificName", sep = " ", remove = F) %>% 
+  select(-species) %>% 
+  rename(species = ScientificName)
+
+```
+
+### V.PhyloMaker_Rfunction
+```{r V.PhyloMaker_Rfunction}
+
+source("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Biblio/V.PhyloMaker_Rfunction/R_codes for function S.PhyloMaker.txt") # lance un fichier dans R, en l'occurence charge la fonction
+
+
+
+#arbre complet des Angiospermes dans lequel la fonction va puiser :
+phylo <- read.tree("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Biblio/V.PhyloMaker_Rfunction/PhytoPhylo.tre")
+nodes <- read.csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Biblio/V.PhyloMaker_Rfunction/nodes.csv", header=T)
+
+# #Application de la fonction :
+# #"splist" dégage seulement les sp qui m'interessent 
+# TENEtree <- S.PhyloMaker(splist = dataphylotree, tree = phylo, nodes = nodes) #création de mon arbre
+
+# save(TENEtree, file = "TENEtree.Rdata")
+# load("TENEtree.Rdata")
+
+# # Show the phylogenies under 3 scenarios.
+# par(mfrow = c(1,3),mar = c(0,0,1,0))
+# plot(TENEtree$Scenario.1,cex = 1.1,main = "Scenarion One")
+# plot(TENEtree$Scenario.2,cex = 1.1,main ="Scenarion Two")
+# plot(TENEtree$Scenario.3,cex = 1.1,main ="Scenarion Three")
+```
+
+Je souhaite obtenir un arbre de la composition floristique de chaque parcelle,
+A incorporer de la calcul de diversité phylogénétique de chaque parcelle.
+
+Essayons d'injecter la liste de composition floristique par plot dans la fonction calculant les arbres
+
+### Générer des arbres (de classe "phylo") à partir d'une liste de composition floristique :
+```{r arbres phylo a partir dune composition floristique}
+
+# My data to generate treeS :
+dataphylotree <- Data_Tene %>% #species composition table for each plot
+  select(genus, species, family, plot) %>% 
+  distinct() %>% 
+  filter(!is.na(genus)) %>% #remove non-identified species
+  filter(!(genus == "Cedrela")) %>% #Remove Cedrela of the response variable because it will be a covariant
+  unite(genus, species, col = "ScientificName", sep = " ", remove = F) %>% 
+  select(-species) %>% 
+  rename(species = ScientificName)
+
+#create a list with a table for each plot :
+dataphylotreelist <- split(dataphylotree, dataphylotree$plot)
+
+#a tree for each plot :
+# treeperplot <- lapply(dataphylotreelist, function(element) S.PhyloMaker(splist=element, tree=phylo, nodes=nodes))
+# save(treeperplot, file = "treeperplot.Rdata")
+load("treeperplot.Rdata")
+```
+
+### Rendre les arbres ultrametriques et binaires
+```{r ultrametriques et binaires}
+
+# Forces A Phylogenetic Tree To Be Ultrametric (same branch lengths)
+UltrametricTreeperplot <- lapply(treeperplot, function(element) force.ultrametric(element$Scenario.2, method="extend"))
+
+# resolve multichotomies (rateaux) (-> binary tree)
+BinaryTreeperplot <- lapply(UltrametricTreeperplot, function(element) multi2di(element, random = F)) #resolve multichotomies in the order they appear in the tree
+
+# check that the trees are binary
+lapply(BinaryTreeperplot, function(element) is.binary.tree(element))
+
+plot(BinaryTreeperplot$`2`,cex=1.1)
+
+```
+
+### Phylogenetic diversity indices computation
+```{r Phylogenetic diversity indices computation}
+
+# 'bcPhyloDiversity' function necessites a 'NAMED VECTOR' as species abundances numeric vector (non specified in R help's function)
+
+
+#add "_" enter genus and species name in ScientificName to COORESPOND AT THE TREE'S TIP.LABELS 
+sep_ <- Data_Tene %>% 
+  filter(!is.na(genus)) %>% #remove non-identified species
+  group_by(genus, species, plot) %>% #by species & plot
+  summarise(N = n()) %>%  #abundances
+  arrange(plot, desc(N)) %>% 
+  ungroup(genus, species) %>% 
+  filter(!(genus == "Cedrela")) %>% #Remove Cedrela of the response variable because it will be a covariant
+  unite(genus, species, col = "ScientificName", sep = "_", remove = T)
+
+
+#create a new list :
+abondplotslistsep_ <- split(sep_, sep_$plot)
+
+# Species abundances numeric NAMED vector
+Namedvector <- lapply(abondplotslistsep_,
+                      function(element){
+                         Namedvector <- element$N   # operation1
+                         names(Namedvector) <- element$ScientificName # operation2
+                         return(Namedvector) # préciser ce que la fonction doit renvoyer
+})
+
+# SCRIPTS DE LOCALISATION DE PROBLEMES : 
+#i <- 1 
+# DivPhylo_plot1 <- bcPhyloDiversity(Ns = abondplotslist[[i]]$N,
+#                    Tree = BinaryTreeperplot[[i]],
+#                    q = 1, Normalize = T,
+#                    Correction = "Best", CheckArguments = T)
+# 
+# DivPhylo_Shann <- mapply(function(X,Y) {
+#   print(X)
+#   try(bcPhyloDiversity(Ns = X,
+#                    Tree = Y,
+#                    q = 1, Normalize = T,
+#                    Correction = "Best", CheckArguments = T))
+#   }, X=Namedvector, Y=BinaryTreeperplot)
+
+DivPhylo_Shann <- mapply(function(X,Y) {
+  bcPhyloDiversity(Ns = X,
+                   Tree = Y,
+                   q = 1, Normalize = T,
+                   Correction = "Best", CheckArguments = T)
+  }, X=Namedvector, Y=BinaryTreeperplot, SIMPLIFY = F) #SIMPLIFY = F : laisse la structure initiale de la liste (par plot dans ce cas)
+
+DivPhylo_Shann_values <- lapply(DivPhylo_Shann, getElement, "Total")#extraction de la valeur (Total) de l'indice grace à la fonction "getElement"(='$')
+
+```
+
+Put phylo values in a table
+```{r Phylo values in a table}
+Diversitytable_phyloshan <- DivPhylo_Shann_values %>% 
+  as_tibble(.) %>% 
+  t() %>% #transpose romws & columns
+  as.tibble(.) %>%
+  rownames_to_column(var= "plot") %>% 
+  rename(DivPhylo_Shann=V1)
+```
+
+# Data exploration
+
+We have computed diversity indices at 3 different scales :
+ - Taxonomic
+ - Phylogenetic
+ - Functional
+ 
+Each type is calculated for each plot.  
+
+## Covariants data base
+```{r Covariants data base}
+data_subplot <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/data_subplot.csv", 
+    ";", escape_double = FALSE, locale = locale(decimal_mark = ","), 
+    trim_ws = TRUE)
+
+
+
+covariantsdata <- data_subplot %>% 
+   select(-biomass, -X1, -plot_subplot, -biomass, 
+          -shannon_ind, -simpson_ind, -edge_dist_norm, -mean_dist_seedsource, -prop_soil1, -prop_soil2) %>% #only soil3
+  group_by(plot) %>% #to have covariants at plot scale
+  mutate(prop_ced = mean(prop_ced)) %>% 
+  mutate(prop_soil3 = mean(prop_soil3)) %>% 
+  mutate(prop_fire = mean(prop_fire)) %>% 
+  mutate(prop_ba_removed = mean(prop_ba_removed)) %>%
+  rename(prop_hydrosoil = prop_soil3) %>% 
+  ungroup() %>%
+  distinct() %>% 
+  arrange(plot) %>% 
+  mutate(plot = as.character(as.numeric(plot))) %>%
+  left_join(Diversitytable_taxshan, by = "plot") %>% # Taxonomic diversity values
+  left_join(Diversitytable_phyloshan, by = "plot") %>%   # Phylogenetic diversity values
+  left_join(Diversitytable_fctnalshan, by = "plot")   # Functional diversity values
+
+standardcovariantsdata <- covariantsdata %>% 
+  mutate_at(c("prop_ced", "prop_hydrosoil", "prop_fire", "prop_ba_removed"),
+            funs(as.vector(scale(.)))) #To standardize variables to put them at the same scale and to keep theta0 as mean of the response variable.
+ 
+```
+
+## Wide-format to long-format 
+```{r Wide/Longformat}
+# Wide-format to long-format -> facet_wrap/grid
+covariantsdataLongformat <- melt(covariantsdata)
+```
+
+## Diversity indices repartition
+```{r}
+#Diversity indices repartition
+covariantsdataLongformat %>%
+ filter(variable %in% c("DivTaxo_Shann", "DivPhylo_Shann", 
+"DivFctnal_Shann")) %>%
+ ggplot() +
+ aes(x = variable, y = value) +
+ geom_boxplot(fill = "#3e4a89") +
+ labs(x = "Diversity indices", y = "Values") +
+ theme_minimal()
+
+#Functional diversity indices repartition
+ggplot(covariantsdata) +
+ aes(x = "", y = DivFctnal_Shann) +
+ geom_boxplot(fill = "#3e4a89") +
+ theme_minimal()
+
+```
+
+```{r}
+
+```
+
+## Covariants-diversity relation visualisation (Regressions)
+
+```{r Regressions}
+
+# Double 'melt' -> long-format -> facet_wrap/grid
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/Regressions.png", width=1180, height=900)  
+
+covariantsdataLongformat %>%
+  dcast(plot ~ variable) %>% 
+  melt(id.vars = c("plot",
+                   "DivTaxo_Shann", "DivPhylo_Shann", "DivFctnal_Shann"),
+                 variable.name = "explanatory",
+                 value.name = "explanatory_value") %>% 
+  melt(id.vars = c("plot",
+                   "explanatory", "explanatory_value"),
+                 variable.name = "response",
+                 value.name = "response_value") %>% 
+ ggplot() +
+ aes(x = explanatory_value, 
+     y = response_value) +
+  geom_point(size = 2.1) +
+  labs(x = "Explanatory value", y = "Response value") +
+ theme_minimal() +
+  geom_smooth(method = "lm", colour = "#3e4a89") +
+  ggpubr::stat_cor() +
+  facet_grid(response ~ explanatory, scales = "free")
+
+dev.off()
+```
+* Cedrela proportion has a negative relation with all diversity aspects (Taxonomic, phylogenetic, functional).
+* Negative relation between fire proportion and diversity exept for taxonomic diversity, with which it has no relation.
+* Negative relation between fire proportion and diversity exept for taxonomic diversity, with which it has no relation.
+* Hydromorphic soil proportion has a positive relation with diversity exept for functional diversity, with which it has no relation.
+
+
+
+## Variables density curve
+```{r Variables density curve}
+
+# Variables distribution under density curve
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/density curve.png", width=738, height=512)  
+
+covariantsdataLongformat %>%
+ ggplot() +
+ aes(x = value) +
+ geom_density(adjust = 1L, fill = "#3e4a89") + # default adjustment
+ theme_minimal() +
+ facet_wrap(vars(variable), scales = "free")
+
+dev.off()
+
+
+# Variables distribution under density curve & histogram
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/density curve & histogram.png", width=738, height=512)    
+
+covariantsdataLongformat %>%
+  ggplot() +
+ aes(x = value) +
+  geom_histogram(aes(y=..density..), bins = 30L, fill = "#3e4a89") +
+ geom_density(alpha = .2, fill = "antiquewhite3") + # default adjustment
+ labs(x = "Value", y = "Density") +
+  theme_minimal() +
+ facet_wrap(vars(variable), scales = "free")
+
+dev.off()
+
+```
+  * DivTaxo_Shan, DivPhylo_Shan & prop_fire can be considered as Normal variables
+  * prop_ced can be considered as a logNormal variable
+  * prop_ba_removed seems to be binary : "non-exploited" & "exploited", and a small distribution in the "exploited" category, which can be neglected.
+  Let's try to propose a factorial version of this variable :
+
+## Add "Sylviculture" : a factorial version  
+```{r Sylviculture : factorial version}
+
+covariantsdata_plus1 <- covariantsdata %>% 
+  mutate(Sylviculture = ifelse(prop_ba_removed == 0.000, "0", "1")) %>% 
+  mutate(Sylviculture = as.factor(as.character(Sylviculture)))
+
+covariantsdata_plus1Longformat <- covariantsdata_plus1 %>% 
+  select(plot, Sylviculture) %>% 
+  left_join((covariantsdataLongformat))
+
+# Variables distribution histogram with/without sylviculture
+
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/histogram with-without sylviculture.png", width=738, height=512)    
+
+covariantsdata_plus1Longformat %>%
+ ggplot() +
+ aes(x = value, fill = Sylviculture) +
+ geom_histogram(bins = 30, alpha = .6,) + # default adjustment
+ scale_fill_brewer(palette = "Dark2") +
+  theme_minimal() +
+ facet_wrap(vars(variable), scales = "free")
+
+dev.off()
+
+# Variables distribution under density curve with/without sylviculture
+
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/density curve with-without sylviculture.png", width=738, height=512)    
+
+covariantsdata_plus1Longformat %>%
+ ggplot() +
+ aes(x = value, fill = Sylviculture) +
+ geom_density(adjust = 1L, alpha = .6,) + # default adjustment
+ scale_fill_brewer(palette = "Dark2") + 
+  theme_minimal() +
+ facet_wrap(vars(variable), scales = "free")
+
+dev.off()
+
+```
+* Sylviculture presence influences fire & Cedrela proportions : less Cedrela & less fire when there was no silviculture 
+* But Sylviculture presence influence does not influence the response variables.
+
+## Correlation tests
+```{r Correlationtests}
+
+# A quantitative traits base:
+baseforcor_var <- covariantsdata %>% 
+  select(-plot)
+#pas besoin de tester la normalité : n>30.
+CorMatrix_variables <- round(cor(baseforcor_var), digits = 2) # matrice de corrélation, avec 2 décimales
+
+CorMatrixS_variables <- rcorr(as.matrix(baseforcor_var))
+CorMatrix_variables <- CorMatrixS_variables$r #correlations
+Pval_corr_variables <- CorMatrixS_variables$P #p-values
+
+# Correlation plot:
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/corrplot_var.png", width=738, height=512)    
+
+corrplot(CorMatrix_variables, method="number", type="lower", col=brewer.pal(n=8, name="PuOr"), tl.col="black", tl.srt=25) 
+
+dev.off()
+
+```
+Linear correlations :
++ Taxonomic diversity is strongly positivly related to phylogenetic diversity  (r=0.94) & to functional diversity (r=0.76)
+
++ Phylogenetic diversity is also strongly positivly related, but less, to functional diversity (r=0.71)
+
++ Cedrela proportion is strongly positivly related to fire proportion (r=0.55), and more related to hydromorphic proportion (r=0.29) than to BA-removed proportion (r=0.2).
+
++ Hydromorphic soil has a positiv relation with taxonomic (r=0.3) & phylogenetic (r=0.23) diversity, but no relation with functional diversity (r=-0.22), and it is the soil type least related to fire (r= soil1: -0.14 ; soil2: 0.17) & BA-removed proportions (r= soil1: -0.23 ; soil2: 0.33) (this is therefore an independant variable of sylviculture & fire effect on diversity, and dependant variable of Cedrela effect on diversity (other plot).
+
++ Cedrela > Sylviculture > fire relation -> on Diversity
+
++ Fire and sylviculture are strongly positivly related (r=0.64)
+
+## Regressions with/without sylviculture
+```{r Regressions with/without sylviculture}
+
+# Double 'melt' -> long-format -> facet_wrap/grid
+
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/Regressions with-without sylviculture.png", width=1180, height=900)  
+
+covariantsdata_plus1Longformat %>%
+  dcast(plot + Sylviculture ~ variable) %>% 
+  melt(id.vars = c("plot", "Sylviculture", 
+                             "DivTaxo_Shann", "DivPhylo_Shann", "DivFctnal_Shann"),
+                 variable.name = "explanatory",
+                 value.name = "explanatory_value") %>% 
+  melt(id.vars = c("plot", "Sylviculture", 
+                             "explanatory", "explanatory_value"),
+                 variable.name = "response",
+                 value.name = "response_value") %>% 
+ ggplot() +
+ aes(x = explanatory_value, 
+     y = response_value,
+     fill = Sylviculture, col = Sylviculture) +
+  geom_point(size = 2.1) +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(x = "Explanatory value", y = "Response value") +
+  scale_fill_brewer(palette = "Dark2") + # colore le spectre de variance autour de la droite de régression
+ scale_color_brewer(palette = "Dark2") + # colore points et droite de régression
+  theme_minimal()+
+  geom_smooth(method = "lm") +
+  ggpubr::stat_cor()+
+  facet_grid(response ~ explanatory, scales = "free")
+
+dev.off()
+
+```
+
+There are potencials interactions between Sylviculture and Cedrela/soils/fire
+And for between the other covariants ?
+
+## Regressions with fire & Cedrela categorised
+```{r Regressions with fire & Cedrela categorised}
+
+#Split Cedrela and fire variables in classes :
+covariantsdata_classes <- covariantsdata_plus1 %>% 
+  mutate(Cedrela_classes = gtools::quantcut(prop_ced, 3)) %>% 
+  mutate(Fire_classes = gtools::quantcut(prop_fire, 3)) 
+
+write.csv2(covariantsdata_classes, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/covariantsdata_classes.csv")
+
+covariantsdata_classesLongformat <- covariantsdata_classes %>% 
+  select(plot, Sylviculture, Cedrela_classes, Fire_classes) %>% 
+  left_join((covariantsdataLongformat))
+
+# Under Cedrela proportion :
+
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/Regressions_under Cedrela proportion.png", width=1180, height=900)    
+
+covariantsdata_classesLongformat %>%
+  dcast(plot + Sylviculture + Cedrela_classes + Fire_classes ~ variable) %>% 
+  melt(id.vars = c("plot", "Sylviculture", "Cedrela_classes", "Fire_classes", 
+                             "DivTaxo_Shann", "DivPhylo_Shann", "DivFctnal_Shann"),
+                 variable.name = "explanatory",
+                 value.name = "explanatory_value") %>% 
+  melt(id.vars = c("plot", "Sylviculture", "Cedrela_classes", "Fire_classes",
+                             "explanatory", "explanatory_value"),
+                 variable.name = "response",
+                 value.name = "response_value") %>% 
+ ggplot() +
+ aes(x = explanatory_value, 
+     y = response_value, col = Cedrela_classes) +
+  geom_point(size = 2.1) +
+  labs(x = "Explanatory value", y = "Response value") +
+  # scale_color_brewer(palette = "Spectral", direction = -1) + # colore points et droite de régression ♥
+theme_minimal()+
+  geom_smooth(method = "lm") +
+  ggpubr::stat_cor()+
+  facet_grid(response ~ explanatory, scales = "free")
+
+dev.off()
+
+# Under Fire proportion :
+
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/Regressions_under fire proportion.png", width=1180, height=900)    
+
+covariantsdata_classesLongformat %>%
+  dcast(plot + Sylviculture + Cedrela_classes + Fire_classes ~ variable) %>% 
+  melt(id.vars = c("plot", "Sylviculture", "Cedrela_classes", "Fire_classes", 
+                             "DivTaxo_Shann", "DivPhylo_Shann", "DivFctnal_Shann"),
+                 variable.name = "explanatory",
+                 value.name = "explanatory_value") %>% 
+  melt(id.vars = c("plot", "Sylviculture", "Cedrela_classes", "Fire_classes",
+                             "explanatory", "explanatory_value"),
+                 variable.name = "response",
+                 value.name = "response_value") %>% 
+ ggplot() +
+ aes(x = explanatory_value, 
+     y = response_value, col = Fire_classes) +
+  geom_point(size = 2.1) +
+  labs(x = "Explanatory value", y = "Response value") +
+ theme_minimal()+
+  geom_smooth(method = "lm") +
+  ggpubr::stat_cor()+
+  facet_grid(response ~ explanatory, scales = "free")
+
+dev.off()
+ 
+```
+There are potencial interactions between Cedrela and soils/fire/sylviculture
+
+* Strong Cedrela proportion cancels fire  & sylviculture effects on diversity. 
+* Cedrela intermediary-class allows higher diversity values.
+
+
+# Stan time 
+
+## Data
+```{r}
+N = dim(standardcovariantsdata) [1] #rows number
+
+# Response values
+DivTaxo_Shann = standardcovariantsdata$DivTaxo_Shann
+DivPhylo_Shann = standardcovariantsdata$DivPhylo_Shann
+DivFctnal_Shann = standardcovariantsdata$DivFctnal_Shann
+
+#standardized predictors
+Silv = standardcovariantsdata$prop_ba_removed
+Fire = standardcovariantsdata$prop_fire
+Ced = standardcovariantsdata$prop_ced
+Soil = standardcovariantsdata$prop_hydrosoil
+
+# Predictions 
+N_pred = 100
+
+## Create 100 values of each predictor
+Silv_seq <- seq(min(covariantsdata$prop_ba_removed),max(covariantsdata$prop_ba_removed), length.out = N_pred)
+Fire_seq <- seq(min(covariantsdata$prop_fire),max(covariantsdata$prop_fire), length.out = N_pred)
+Ced_seq <- seq(min(covariantsdata$prop_ced),max(covariantsdata$prop_ced), length.out = N_pred)
+Soil_seq <- seq(min(covariantsdata$prop_hydrosoil),max(covariantsdata$prop_hydrosoil), length.out = N_pred)
+
+# Sampled standardized predictors
+# de max et min des variables non standardizées  
+Silv_pred = (as.vector(scale(Silv_seq))) 
+Fire_pred = (as.vector(scale(Fire_seq))) 
+Ced_pred = (as.vector(scale(Ced_seq)))
+Soil_pred = (as.vector(scale(Soil_seq)))
+
+# Fire_pred = (seq(min(Fire),max(Fire), length.out = N_pred)- mean(Fire))/sd(Fire) # standardized with original var mean and scale
+# Ced_pred = (seq(min(Ced),max(Ced), length.out = N_pred)- mean(Ced))/sd(Ced) 
+# Soil_pred = (seq(min(Soil),max(Soil), length.out = N_pred)- mean(Soil))/sd(Soil)
+```
+
+## Just models compilation
+```{r}
+# Taxo
+## Data
+data_Taxo <- list(
+  N = N, 
+  DivTaxo_Shann = DivTaxo_Shann,
+  Sylv = Silv,
+  Fire = Fire,
+  Ced = Ced,
+  Soil = Soil #we take only the hydromorphic soil
+  )
+data_Taxo_interac <- list(
+  N = N, #rows number
+  DivTaxo_Shann = DivTaxo_Shann,
+  Sylv = Silv,
+  Fire = Fire,
+  Ced = Ced,
+  Soil = Soil, #we take only the hydromorphic soil
+  N_pred = N_pred,
+  Sylv_pred = Silv_pred,
+  Fire_pred = Fire_pred, 
+  Ced_pred = Ced_pred, 
+  Soil_pred = Soil_pred
+  )
+## Models
+DivTaxo_ShannM2_IDH_Ced <- stan("DivTaxo_ShannM2(Cedrela_IDH).stan", data = data_Taxo, iter = 2000) 
+DivTaxo_ShannM3_IDH_Sylv <- stan("DivTaxo_ShannM3(Sylv_IDH).stan", data = data_Taxo, iter = 2000) 
+DivTaxo_ShannM4_IDH_Fire <- stan("DivTaxo_ShannM4(Fire_IDH).stan", data = data_Taxo, iter = 2000) 
+DivTaxo_ShannM5_interac_fire_sylv <- stan("DivTaxo_ShannM5(interac_fire-sylv).stan", data = data_Taxo_interac, iter = 2000) 
+
+# Phylo
+## Data
+data_Phylo <- list(
+  N = N, 
+  DivPhylo_Shann = DivPhylo_Shann,
+  Sylv = Silv,
+  Fire = Fire,
+  Ced = Ced,
+  Soil = Soil)
+
+data_Phylo_interac <- list(
+  N = N, 
+  DivPhylo_Shann = DivPhylo_Shann,
+  Sylv = Silv,
+  Fire = Fire,
+  Ced = Ced,
+  Soil = Soil, #we take only the hydromorphic soil
+  N_pred = N_pred,
+  Sylv_pred = Silv_pred,
+  Fire_pred = Fire_pred, 
+  Ced_pred = Ced_pred, 
+  Soil_pred = Soil_pred
+  )
+## Models
+DivPhylo_ShannM2_IDH_Ced <- stan("DivPhylo_ShannM2(Cedrela_IDH).stan", data = data_Phylo, iter = 2000) 
+DivPhylo_ShannM3_IDH_Sylv <- stan("DivPhylo_ShannM3(Sylv_IDH).stan", data = data_Phylo, iter = 2000) 
+DivPhylo_ShannM4_IDH_Fire <- stan("DivPhylo_ShannM4(Fire_IDH).stan", data = data_Phylo, iter = 2000) 
+DivPhylo_ShannM5_interac_fire_sylv <- stan("DivPhylo_ShannM5(interac_fire-sylv).stan", data = data_Phylo_interac, iter = 2000) 
+
+# Fctnal
+## Data
+data_Fctnal <- list(
+  N = N, 
+  DivFctnal_Shann = DivFctnal_Shann,
+  Sylv = Silv,
+  Fire = Fire,
+  Ced = Ced,
+  Soil = Soil)
+
+data_Fctnal_interac <- list(
+  N = N, 
+  DivFctnal_Shann = DivFctnal_Shann,
+  Sylv = Silv,
+  Fire = Fire,
+  Ced = Ced,
+  Soil = Soil, #we take only the hydromorphic soil
+  N_pred = N_pred,
+  Sylv_pred = Silv_pred,
+  Fire_pred = Fire_pred,
+  Ced_pred = Ced_pred, 
+  Soil_pred = Soil_pred
+  )
+## Models
+DivFctnal_ShannM2_IDH_Ced <- stan("DivFctnal_ShannM2(Cedrela_IDH).stan", data = data_Fctnal, iter = 2000) 
+DivFctnal_ShannM3_IDH_Sylv <- stan("DivFctnal_ShannM3(Sylv_IDH).stan", data = data_Fctnal, iter = 2000) 
+DivFctnal_ShannM4_IDH_Fire <- stan("DivFctnal_ShannM4(Fire_IDH).stan", data = data_Fctnal, iter = 2000) 
+DivFctnal_ShannM5_interac_fire_sylv <- stan("DivFctnal_ShannM5(interac_fire-sylv).stan", data = data_Fctnal_interac, iter = 2000) 
+
+```
+
+
+## Stan for taxonomic diversity of Shannon
+
+###Simple model :
+_DivTaxo_Shann ~ lognormal(mu, sigma)_ LogNormal
+
+```{r DivTaxo_ShannM0 : data list & compilation}
+
+data <- list(
+  N = dim(Diversitytable_taxshan) [1], 
+  DivTaxo_Shann = Diversitytable_taxshan$DivTaxo_Shann
+  )
+
+DivTaxo_ShannM0modif <- stan("DivTaxo_ShannM0modif.stan", data = data, iter = 2000) #compilation
+DivTaxo_ShannM0modif
+
+#Chains
+mcmc_trace(as.array(DivTaxo_ShannM0modif), #as.array = comme vecteurs
+           facet_args=list(labeller=label_parsed), #to put in grec letters
+           np = nuts_params(DivTaxo_ShannM0modif)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivTaxo_ShannM0modif))
+
+#Posterior distribution 
+mcmc_areas(as.array(DivTaxo_ShannM0modif), prob=0.95, pars = "theta0") # pars display some parameters
+
+#Complete visialisation
+# launch_shinystan(DivTaxo_ShannM0modif) 
+
+```
+* Chains have perfectly converged to theta0 = 35, with a likelihood = 21.3
+* Parameters are independant.
+* Theta0 is Normal and significant.
+
+
+### Intermediate Disturbance Hypothesis (IDH)
+#### Cedrela 
+```{r}
+DivTaxo_ShannM2_IDH_Ced
+
+# Parameters :
+# theta1 = sylviculture 
+# theta2 = fire 
+# theta3a = Cedrela parameter croissant part of intermediate HP 
+# theta3b = Cedrela parameter descending part 
+# theta4 = soil
+
+#Chains
+mcmc_trace(as.array(DivTaxo_ShannM2_IDH_Ced), #as.array = comme vecteur
+           np = nuts_params(DivTaxo_ShannM2_IDH_Ced)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivTaxo_ShannM2_IDH_Ced)) 
+
+#Boxplot
+mcmc_intervals(DivTaxo_ShannM2_IDH_Ced, pars = c("theta0","theta1","theta2","theta3a", "theta3b","theta4"))
+plot(DivTaxo_ShannM2_IDH_Ced)
+
+```
+Cedrela is not an "intermediate disturbance" : theta3a is negativ.
+
+#### Sylviculture 
+```{r}
+DivTaxo_ShannM3_IDH_Sylv
+
+# Parameters :
+# theta1a = sylviculture parameter croissant part of intermediate HP 
+# theta1b = sylviculture parameter descending part 
+# theta2 = fire 
+# theta3 = Cedrela parameter
+# theta4 = soil
+
+#Chains
+# mcmc_trace(as.array(DivTaxo_ShannM3_IDH_Sylv), #as.array = comme vecteur
+#            np = nuts_params(DivTaxo_ShannM3_IDH_Sylv)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivTaxo_ShannM3_IDH_Sylv)) 
+
+#Boxplot
+mcmc_intervals(DivTaxo_ShannM3_IDH_Sylv, pars = c("theta0","theta1a","theta1b","theta2","theta3", "theta4")) 
+
+```
+Taxonomic diversity *decreases at low BA-removed proportion and increases at higher* BA-removed proportion
+It is not "intermediate disturbance" 
+
+Positiv soil effect 
+
+#### Fire 
+```{r}
+DivTaxo_ShannM4_IDH_Fire
+
+# Parameters :
+# theta1 = sylviculture 
+# theta2a = fire parameter croissant part of intermediate HP 
+# theta2b = fire parameter descending part
+# theta3 = Cedrela parameter
+# theta4 = soil
+
+#Chains
+mcmc_trace(as.array(DivTaxo_ShannM4_IDH_Fire), #as.array = comme vecteur
+           np = nuts_params(DivTaxo_ShannM4_IDH_Fire)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivTaxo_ShannM4_IDH_Fire)) 
+
+#Boxplot
+mcmc_intervals(DivTaxo_ShannM4_IDH_Fire, pars = c("theta0","theta1","theta2a","theta2b","theta3", "theta4"))
+
+```
+Fire is not an "intermediate disturbance" : theta2b is positiv.
+
+### Interaction Sylviculture * fire
+
+```{r}
+DivTaxo_ShannM5_interac_fire_sylv
+
+# Parameters :
+# theta1 = sylviculture 
+# theta2 = fire 
+# theta3 = Cedrela parameter
+# theta4 = soil
+# theta5 = Fire:Sylv interaction
+
+#Chains
+mcmc_trace(as.array(DivTaxo_ShannM5_interac_fire_sylv), #as.array = comme vecteur
+           np = nuts_params(DivTaxo_ShannM5_interac_fire_sylv)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivTaxo_ShannM5_interac_fire_sylv)) 
+
+#Boxplot
+mcmc_intervals(DivTaxo_ShannM5_interac_fire_sylv, pars = paste0("theta", 0:5), prob = 0.95) #display thetas (1to5) distribution
+
+plot(DivTaxo_ShannM5_interac_fire_sylv)
+mcmc_intervals(DivTaxo_ShannM5_interac_fire_sylv, regex_pars = "theta3", prob_outer = 0.9)
+```
+* No effect of sylviculture
+* Very low positiv effect of fire but not relevant at 97.5%
+* Strong negativ effect of Cedrela
+* Positiv effect of hydromorphic soil
+* Strong positiv effect of sylviculture & fire interaction
+Ced > fire * sylv  > soil > feu > sylv
+
+Likelihood = 23.56
+
+#### Predictions with Stan
+
+```{r}
+# Outputs model extraction
+Pred_DivTaxo <- as.data.frame(DivTaxo_ShannM5_interac_fire_sylv, pars = c("Pred_DivTaxo_Sylv", "Pred_DivTaxo_Fire", "Pred_DivTaxo_Ced", "Pred_DivTaxo_Soil", "Pred_DivTaxo_sylvXfire")) %>% 
+     reshape2::melt() %>% #100 predictions are in several col -> put them in only one
+     as.tbl() %>% 
+     group_by(variable) %>% 
+     summarise("mean" = mean(value), "Lower_bound_2.5" = quantile(value, 0.025), "Upper_bound_97.5" = quantile(value, 0.975)) %>% 
+  mutate(variable = as.character(as.factor(variable))) %>%
+  mutate(N_pred = as.character(extract_numeric(variable)))  # create a colomn with N_pred number
+
+Pred_DivTaxo$variable <- str_replace_all(Pred_DivTaxo$variable, "[[:punct:]]", " ")#remove punctuation chr
+Pred_DivTaxo$variable <- str_replace_all(Pred_DivTaxo$variable, "\\d", "") #remove digits
+Pred_DivTaxo$variable <- trimws(Pred_DivTaxo$variable,"r")
+Pred_DivTaxo$variable <- str_replace_all(Pred_DivTaxo$variable, "\\s", "_") #replace space by _
+
+Pred_DivTaxo <- Pred_DivTaxo %>% 
+  rename(Div_pred = variable) %>% 
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivTaxo_Sylv", "Silv_pred", NA)) %>%  
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivTaxo_Fire", "Fire_pred", covar_pred)) %>%  
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivTaxo_Ced", "Ced_pred", covar_pred)) %>%  
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivTaxo_Soil", "Soil_pred", covar_pred)) %>%  
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivTaxo_sylvXfire", "silvXfire_pred", covar_pred))  
+
+
+# Sampled covariants table:
+
+Covariants_pred <- data.frame(
+Silv_pred = Silv_pred,
+Fire_pred = Fire_pred, 
+Ced_pred = Ced_pred, 
+Soil_pred = Soil_pred,
+Silv_pred1 = Silv_seq,
+Fire_pred1 = Fire_seq,
+Ced_pred1 = Ced_seq,
+Soil_pred1 =  Soil_seq
+) %>% 
+  mutate(silvXfire_pred = Silv_pred * Fire_pred) %>%
+  mutate(silvXfire_pred1 = Silv_pred1 * Fire_pred1) %>%
+  rownames_to_column(var= "N_pred")
+
+Standpred <- Covariants_pred %>% 
+  select(N_pred, Silv_pred, Fire_pred, Ced_pred, Soil_pred, silvXfire_pred) %>% 
+  reshape2:: melt(id.vars = 'N_pred',
+                 variable.name = "covar_pred",
+                 value.name = "Stand_val") 
+  
+Nostandpred <- Covariants_pred %>% 
+  select(N_pred, Silv_pred1, Fire_pred1, Ced_pred1, Soil_pred1, silvXfire_pred1) %>% 
+  reshape2:: melt(id.vars = 'N_pred',
+                 variable.name = "covar_pred",
+                 value.name = "covar_val") %>% 
+  mutate(covar_pred = recode(covar_pred, "'Silv_pred1' = 'Silv_pred'; 'Fire_pred1' = 'Fire_pred'; 'Ced_pred1' = 'Ced_pred'; 'Soil_pred1' = 'Soil_pred'; 'silvXfire_pred1' = 'silvXfire_pred'")) 
+  
+Covariants_pred <- Standpred %>% 
+  left_join(Nostandpred, by = c('N_pred', 'covar_pred'))
+
+Pred_covariantsdata_Taxo <- Pred_DivTaxo %>% 
+  left_join(Covariants_pred, by = c("N_pred", "covar_pred"))
+  
+
+
+# Pretiction plots
+
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/Pretiction_plots_Taxo.png", width=738, height=512)
+
+ggplot(Pred_covariantsdata_Taxo) +
+ aes(x = covar_val, y = mean) +
+  geom_ribbon(aes(ymin = Lower_bound_2.5, ymax = Upper_bound_97.5), alpha = 0.2) +
+ geom_point(size = 0.34, colour = "#3e4a89") +
+  labs(x = "Predictors proportions", y = "Predicted Hill's number") +
+ theme_minimal() +
+ facet_wrap(vars(covar_pred), scales = "free_x")
+
+dev.off()
+
+```
+
+
+## Stan for phylogenetic diversity of Shannon
+
+_DivPhylo_Shann ~ lognormal(mu, sigma)_ LogNormal
+
+### Intermediate Disturbance Hypothesis (IDH)
+#### Cedrela 
+```{r}
+DivPhylo_ShannM2_IDH_Ced
+
+# Parameters :
+# theta1 = sylviculture 
+# theta2 = fire 
+# theta3a = Cedrela parameter croissant part of intermediate HP 
+# theta3b = Cedrela parameter descending part 
+# theta4 = soil
+
+#Chains
+mcmc_trace(as.array(DivPhylo_ShannM2_IDH_Ced), #as.array = comme vecteur
+           np = nuts_params(DivPhylo_ShannM2_IDH_Ced)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivPhylo_ShannM2_IDH_Ced)) 
+
+#Boxplot
+mcmc_intervals(DivPhylo_ShannM2_IDH_Ced, pars = c("theta0","theta1","theta2","theta3a", "theta3b","theta4"))
+
+```
+Cedrela is not an "intermediate disturbance" : theta3a is negativ.
+
+
+#### Sylviculture 
+```{r}
+DivPhylo_ShannM3_IDH_Sylv
+
+# Parameters :
+# theta1a = sylviculture parameter croissant part of intermediate HP 
+# theta1b = sylviculture parameter descending part 
+# theta2 = fire 
+# theta3 = Cedrela parameter
+# theta4 = soil
+
+#Chains
+mcmc_trace(as.array(DivPhylo_ShannM3_IDH_Sylv), #as.array = comme vecteur
+           np = nuts_params(DivPhylo_ShannM3_IDH_Sylv)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivPhylo_ShannM3_IDH_Sylv)) 
+
+#Boxplot
+mcmc_intervals(DivPhylo_ShannM3_IDH_Sylv, pars = c("theta0","theta1a","theta1b","theta2","theta3", "theta4")) 
+
+```
+Sylviculture is not an "intermediate disturbance" : theta1a is negativ and theta1b is positiv.
+
+
+#### Fire 
+```{r}
+DivPhylo_ShannM4_IDH_Fire
+
+# Parameters :
+# theta1 = sylviculture 
+# theta2a = fire parameter croissant part of intermediate HP 
+# theta2b = fire parameter descending part
+# theta3 = Cedrela parameter
+# theta4 = soil
+
+#Chains
+mcmc_trace(as.array(DivPhylo_ShannM4_IDH_Fire), #as.array = comme vecteur
+           np = nuts_params(DivPhylo_ShannM4_IDH_Fire)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivPhylo_ShannM4_IDH_Fire)) 
+
+#Boxplot
+mcmc_intervals(DivPhylo_ShannM4_IDH_Fire, pars = c("theta0","theta1","theta2a","theta2b","theta3", "theta4"))
+
+```
+Fire is not an "intermediate disturbance" : theta2b is positiv.
+
+
+### Interaction Sylviculture * fire
+
+```{r}
+DivPhylo_ShannM5_interac_fire_sylv
+
+# Parameters :
+# theta1 = sylviculture 
+# theta2 = fire 
+# theta3 = Cedrela parameter
+# theta4 = soil
+# theta5 = Fire:Sylv interaction
+
+#Chains
+mcmc_trace(as.array(DivPhylo_ShannM5_interac_fire_sylv), #as.array = comme vecteur
+           np = nuts_params(DivPhylo_ShannM5_interac_fire_sylv)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivPhylo_ShannM5_interac_fire_sylv)) 
+
+#Boxplot
+mcmc_intervals(DivPhylo_ShannM5_interac_fire_sylv, pars = paste0("theta", 0:5)) #display thetas (1to5) distribution
+
+```
+* No effect of sylviculture and fire
+* Strong negativ effect of Cedrela
+* Positiv effect of hydromorphic soil
+* Strong positiv effect of sylviculture & fire interaction
+Ced > fire * sylv  > soil > sylv > feu 
+
+#### Predictions with Stan
+
+```{r}
+# Outputs model extraction
+Pred_DivPhylo <- as.data.frame(DivPhylo_ShannM5_interac_fire_sylv, pars = c("Pred_DivPhylo_Sylv", "Pred_DivPhylo_Fire", "Pred_DivPhylo_Ced", "Pred_DivPhylo_Soil", "Pred_DivPhylo_sylvXfire")) %>% 
+     reshape2::melt() %>% #100 predictions are in several col -> put them in only one
+     as.tbl() %>% 
+     group_by(variable) %>% 
+     summarise("mean" = mean(value), "Lower_bound_2.5" = quantile(value, 0.025), "Upper_bound_97.5" = quantile(value, 0.975)) %>% 
+  mutate(variable = as.character(as.factor(variable))) %>%
+  mutate(N_pred = as.character(extract_numeric(variable)))  # create a colomn with N_pred number
+
+Pred_DivPhylo$variable <- str_replace_all(Pred_DivPhylo$variable, "[[:punct:]]", " ")#remove punctuation chr
+Pred_DivPhylo$variable <- str_replace_all(Pred_DivPhylo$variable, "\\d", "") #remove digits
+Pred_DivPhylo$variable <- trimws(Pred_DivPhylo$variable,"r")
+Pred_DivPhylo$variable <- str_replace_all(Pred_DivPhylo$variable, "\\s", "_") #replace space by _
+
+Pred_DivPhylo <- Pred_DivPhylo %>% 
+  rename(Div_pred = variable) %>% 
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivPhylo_Sylv", "Silv_pred", NA)) %>%  
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivPhylo_Fire", "Fire_pred", covar_pred)) %>%  
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivPhylo_Ced", "Ced_pred", covar_pred)) %>%  
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivPhylo_Soil", "Soil_pred", covar_pred)) %>%  
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivPhylo_sylvXfire", "silvXfire_pred", covar_pred))  
+
+
+
+Pred_covariantsdata_Phylo <- Pred_DivPhylo %>% 
+  left_join(Covariants_pred, by = c("N_pred", "covar_pred"))
+
+# Pretiction plots
+
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/Pretiction_plots_Phylo.png", width=738, height=512)
+
+ggplot(Pred_covariantsdata_Phylo) +
+ aes(x = covar_val, y = mean) +
+  geom_ribbon(aes(ymin = Lower_bound_2.5, ymax = Upper_bound_97.5), alpha = 0.2) +
+ geom_point(size = 0.34, colour = "#3e4a89") +
+  labs(x = "Predictors proportions", y = "Predicted Hill's number") +
+ theme_minimal() +
+ facet_wrap(vars(covar_pred), scales = "free_x")
+
+dev.off()
+
+```
+## Stan for functional diversity of Shannon
+
+_DivFctnal_Shann ~ lognormal(mu, sigma)_ LogNormal
+
+### Intermediate Disturbance Hypothesis (IDH)
+#### Cedrela 
+```{r}
+DivFctnal_ShannM2_IDH_Ced
+
+# Parameters :
+# theta1 = sylviculture 
+# theta2 = fire 
+# theta3a = Cedrela parameter croissant part of intermediate HP 
+# theta3b = Cedrela parameter descending part 
+# theta4 = soil
+
+#Chains
+mcmc_trace(as.array(DivFctnal_ShannM2_IDH_Ced), #as.array = comme vecteur
+           np = nuts_params(DivFctnal_ShannM2_IDH_Ced)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivFctnal_ShannM2_IDH_Ced)) 
+
+#Boxplot
+mcmc_intervals(DivFctnal_ShannM2_IDH_Ced, pars = c("theta0","theta1","theta2","theta3a", "theta3b","theta4"))
+
+```
+Cedrela is not an "intermediate disturbance" : theta3a is negativ.
+
+
+#### Sylviculture 
+```{r}
+DivFctnal_ShannM3_IDH_Sylv
+
+# Parameters :
+# theta1a = sylviculture parameter croissant part of intermediate HP 
+# theta1b = sylviculture parameter descending part 
+# theta2 = fire 
+# theta3 = Cedrela parameter
+# theta4 = soil
+
+#Chains
+mcmc_trace(as.array(DivFctnal_ShannM3_IDH_Sylv), #as.array = comme vecteur
+           np = nuts_params(DivFctnal_ShannM3_IDH_Sylv)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivFctnal_ShannM3_IDH_Sylv)) 
+
+#Boxplot
+mcmc_intervals(DivFctnal_ShannM3_IDH_Sylv, pars = c("theta0","theta1a","theta1b","theta2","theta3", "theta4")) 
+
+```
+Sylviculture is not an "intermediate disturbance" : theta1a is negativ and theta1b is positiv.
+
+
+#### Fire 
+```{r}
+DivFctnal_ShannM4_IDH_Fire
+
+# Parameters :
+# theta1 = sylviculture 
+# theta2a = fire parameter croissant part of intermediate HP 
+# theta2b = fire parameter descending part
+# theta3 = Cedrela parameter
+# theta4 = soil
+
+#Chains
+mcmc_trace(as.array(DivFctnal_ShannM4_IDH_Fire), #as.array = comme vecteur
+           np = nuts_params(DivFctnal_ShannM4_IDH_Fire)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivFctnal_ShannM4_IDH_Fire)) 
+
+#Boxplot
+mcmc_intervals(DivFctnal_ShannM4_IDH_Fire, pars = c("theta0","theta1","theta2a","theta2b","theta3", "theta4"))
+
+```
+Fire is not an "intermediate disturbance" : theta2b is positiv.
+
+
+### Interaction Sylviculture * fire
+
+```{r}
+DivFctnal_ShannM5_interac_fire_sylv
+
+# Parameters :
+# theta1 = sylviculture 
+# theta2 = fire 
+# theta3 = Cedrela parameter
+# theta4 = soil
+# theta5 = Fire:Sylv interaction
+
+#Chains
+mcmc_trace(as.array(DivFctnal_ShannM5_interac_fire_sylv), #as.array = comme vecteur
+           np = nuts_params(DivFctnal_ShannM5_interac_fire_sylv)) # np pour afficher la divergeance
+
+#Parameters regressions
+mcmc_pairs(as.array(DivFctnal_ShannM5_interac_fire_sylv)) 
+
+#Boxplot
+mcmc_intervals(DivFctnal_ShannM5_interac_fire_sylv, pars = paste0("theta", 0:5)) #display thetas (1to5) distribution
+
+```
+* No effect of fire
+* Negativ effect of Cedrela and sylviculture
+* Positiv effect of hydromorphic soil
+* Positiv effect of sylviculture & fire interaction
+Ced > fire * sylv  > sylv > soil  > feu 
+
+#### Predictions with Stan
+
+```{r}
+# Outputs model extraction
+Pred_DivFctnal <- as.data.frame(DivFctnal_ShannM5_interac_fire_sylv, pars = c("Pred_DivFctnal_Sylv", "Pred_DivFctnal_Fire", "Pred_DivFctnal_Ced", "Pred_DivFctnal_Soil", "Pred_DivFctnal_sylvXfire")) %>% 
+     reshape2::melt() %>% #100 predictions are in several col -> put them in only one
+     as.tbl() %>% 
+     group_by(variable) %>% 
+     summarise("mean" = mean(value), "Lower_bound_2.5" = quantile(value, 0.025), "Upper_bound_97.5" = quantile(value, 0.975)) %>% 
+  mutate(variable = as.character(as.factor(variable))) %>%
+  mutate(N_pred = as.character(extract_numeric(variable)))  # create a colomn with N_pred number
+
+Pred_DivFctnal$variable <- str_replace_all(Pred_DivFctnal$variable, "[[:punct:]]", " ")#remove punctuation chr
+Pred_DivFctnal$variable <- str_replace_all(Pred_DivFctnal$variable, "\\d", "") #remove digits
+Pred_DivFctnal$variable <- trimws(Pred_DivFctnal$variable,"r")
+Pred_DivFctnal$variable <- str_replace_all(Pred_DivFctnal$variable, "\\s", "_") #replace space by _
+
+Pred_DivFctnal <- Pred_DivFctnal %>% 
+  rename(Div_pred = variable) %>% 
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivFctnal_Sylv", "Silv_pred", NA)) %>%  
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivFctnal_Fire", "Fire_pred", covar_pred)) %>%  
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivFctnal_Ced", "Ced_pred", covar_pred)) %>%  
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivFctnal_Soil", "Soil_pred", covar_pred)) %>%  
+mutate(covar_pred = ifelse(Div_pred == "Pred_DivFctnal_sylvXfire", "silvXfire_pred", covar_pred))  
+
+
+
+
+Pred_covariantsdata_Fctnal <- Pred_DivFctnal %>% 
+  left_join(Covariants_pred, by = c("N_pred", "covar_pred"))
+
+# Pretiction plots
+
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/Pretiction_plots_Fctnal.png", width=738, height=512)
+
+ggplot(Pred_covariantsdata_Fctnal) +
+ aes(x = covar_val, y = mean) +
+  geom_ribbon(aes(ymin = Lower_bound_2.5, ymax = Upper_bound_97.5), alpha = 0.2) +
+ geom_point(size = 0.34, colour = "#3e4a89") +
+  labs(x = "Predictors proportions", y = "Predicted Hill's number") +
+ theme_minimal() +
+ facet_wrap(vars(covar_pred), scales = "free_x")
+
+dev.off()
+
+```

@@ -1,0 +1,219 @@
+---
+title: "Area compute"
+author: "Vincyane Badouard"
+date: "14/05/2020"
+output: html_document
+---
+
+```{r, packages}
+library(readr) #lecture du csv
+library(knitr)
+library(tidyverse)
+```
+
+Compute leaves & roots area 
+Add the different elements of 1 leaf (a,b,c)
+
+```{r, leaves base preparation}
+leaves_area <- read_csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Leaves/Summary of Leaves.csv")
+
+Tulipier <- leaves_area %>% 
+  slice(360:375) %>% 
+  select(Slice,`Total Area`) %>% 
+  separate(Slice, sep = " ",
+           into = c("sp1", "sp2", "sp3","num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  unite(sp1, sp2, sp3, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% 
+  mutate(image = substr(orientation, 3, 3)) %>%
+  select(-Slice, -truc, -orientation) 
+
+
+leaves_area_prep <- leaves_area %>%
+  select(Slice,`Total Area`) %>% 
+  separate(Slice, sep = " ",
+           into = c("sp1", "sp2", "num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  mutate(truc = ifelse(is.na(truc), orientation, truc)) %>% #si truc = NA, = orientation, sinon laisser truc
+  mutate(orientation = ifelse(orientation == "001", num_indiv, orientation)) %>% 
+  mutate(num_indiv = ifelse(num_indiv == orientation, sp2, num_indiv)) %>% 
+  mutate(sp2 = ifelse(sp2 == num_indiv, "", sp2)) %>% 
+  unite(sp1, sp2, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% #prendre les 2 1ers characters d' orientation et les mettre dans orient
+  mutate(image = substr(orientation, 3, 3)) %>% #prendre le dernier character
+  select(-Slice, -truc, -orientation) %>% 
+  slice(1:359) %>% #enlever la partie tulipier
+  bind_rows(Tulipier)
+
+```
+
+```{r, leaves area compute}
+
+details <- leaves_area_prep %>%
+  rename(Area = `Total Area`) %>% 
+  group_by(sp, num_indiv, orient) %>% 
+  mutate(Total_Area = sum(Area))
+
+summarise <- leaves_area_prep %>%
+  rename(Area = `Total Area`) %>% 
+  group_by(sp, num_indiv, orient) %>% 
+  summarise(Total_Area = sum(Area)) %>% 
+  ungroup()
+
+
+```
+
+```{r, add at my general database}
+
+DATABASE1 <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/DATABASE.csv", 
+    ";", escape_double = FALSE, locale = locale(decimal_mark = ","), trim_ws = TRUE)
+
+#renommer les colonnes communes, homogénéisation des codes :
+summarise <- summarise %>% 
+  rename(TreeID = num_indiv) %>%
+  rename(SampleID = orient) %>%
+  rename(Vernacular = sp) %>%
+  rename(Leaves_area = Total_Area) %>% 
+  mutate(SampleID = as.numeric(as.character(SampleID))) %>%
+  mutate(TreeID = recode(TreeID, "1" = "A" , "2" = "B", "3"= "C", "4" = "D"))
+         
+summarise$Vernacular <- trimws(summarise$Vernacular,"r")
+
+#combiner les tables :
+DATABASE1 <- DATABASE1 %>% 
+  left_join(summarise, by = c("Vernacular", "TreeID", "SampleID")) #erreur: Total_area est vide
+
+```
+
+
+```{r, roots base preparation}
+roots_area <- read_csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Roots/Summary of Roots.csv")
+
+Tulipierroots <- roots_area %>% 
+  slice(255:263) %>% 
+  select(Slice,`Total Area`) %>% 
+  separate(Slice, sep = " ",
+           into = c("sp1", "sp2", "sp3","num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  unite(sp1, sp2, sp3, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% 
+  mutate(image = substr(orientation, 3, 3)) %>%
+  select(-Slice, -truc, -orientation) 
+
+
+roots_area_prep <- roots_area %>%
+  select(Slice,`Total Area`) %>% 
+  separate(Slice, sep = " ",
+           into = c("sp1", "sp2", "num_indiv", "orientation", "truc"), 
+           remove = F, extra = "merge") %>% 
+  mutate(truc = ifelse(is.na(truc), orientation, truc)) %>% #si truc = NA, = orientation, sinon laisser truc
+  mutate(orientation = ifelse(orientation == "001", num_indiv, orientation)) %>% 
+  mutate(num_indiv = ifelse(num_indiv == orientation, sp2, num_indiv)) %>% 
+  mutate(sp2 = ifelse(sp2 == num_indiv, "", sp2)) %>% 
+  unite(sp1, sp2, col = "sp", sep = " ") %>% 
+  mutate(orient = substr(orientation, 2, 2)) %>% #prendre les 2 1ers characters d' orientation et les mettre dans orient
+  mutate(image = substr(orientation, 3, 3)) %>% #prendre le dernier character
+  select(-Slice, -truc, -orientation) %>% 
+  slice(1:254) %>% #enlever la partie tulipier
+  bind_rows(Tulipierroots)
+
+```
+
+```{r, roots area compute}
+
+details_roots <- roots_area_prep %>%
+  rename(Area = `Total Area`) %>% 
+  group_by(sp, num_indiv, orient) %>% 
+  mutate(Total_Area = sum(Area))
+
+summary_roots <- roots_area_prep %>%
+  rename(Area = `Total Area`) %>% 
+  group_by(sp, num_indiv, orient) %>% 
+  summarise(Total_Area = sum(Area)) %>% 
+  ungroup()
+
+
+```
+
+```{r, add at my general database}
+
+#renommer les colonnes communes, homogénéisation des codes :
+summary_roots <- summary_roots %>% 
+  rename(TreeID = num_indiv) %>%
+  rename(SampleID = orient) %>%
+  rename(Vernacular = sp) %>%
+  rename(Roots_area = Total_Area) %>% 
+  mutate(SampleID = as.numeric(as.character(SampleID))) %>%
+  mutate(TreeID = recode(TreeID, "1" = "A" , "2" = "B", "3"= "C", "4" = "D"))
+         
+summary_roots$Vernacular <- trimws(summary_roots$Vernacular,"r")
+
+#combiner les tables :
+DATABASE1 <- DATABASE1 %>% 
+  left_join(summary_roots, by = c("Vernacular", "TreeID", "SampleID")) #erreur: Total_area est vide
+
+write.csv2(DATABASE1, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/DATABASE1.csv")
+
+```
+
+```{r, combiner marco & moi}
+
+DATABASE1 <- DATABASE1 %>%
+  mutate(Leaves_area = ifelse(is.na(Leaves_area), LeafArea, Leaves_area)) %>%
+  mutate(Roots_area = ifelse(is.na(Roots_area), RootAverageLenght, Roots_area))
+
+write.csv2(DATABASE1, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/DATABASE1.csv")
+
+```
+
+```{r, units & decimals, a reprendre}
+
+DATABASE1 <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/DATABASE1.csv", 
+    ";", escape_double = FALSE, locale = locale(decimal_mark = ","), 
+    trim_ws = TRUE)
+
+DATABASE1$BarkTh <- as.numeric(DATABASE1$BarkTh)
+DATABASE1$LeafThickness <- as.numeric(DATABASE1$LeafThickness)
+DATABASE1$Roots_area <- as.numeric(DATABASE1$Roots_area)
+DATABASE1$Leaves_area <- as.numeric(DATABASE1$Leaves_area)
+
+
+write.csv2(DATABASE1, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/DATABASE1.csv")
+
+  
+DATABASE2 <- DATABASE1 %>%
+  mutate(BarkTh = BarkTh * 10) %>%  #Leaf & bark thickness in mm (Marco & me)
+  mutate(LeafThickness = LeafThickness * 10) %>%  
+  mutate(Roots_area = ifelse(is.na(RootAverageLenght),Roots_area/100, Roots_area))  #Roots_area in cm^2 (only me)
+
+DATABASE2$Leaves_area <- format(DATABASE2$Leaves_area, digits = 0, scientific = F) 
+
+write.csv2(DATABASE2, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/DATABASE2.csv")
+
+```
+
+```{r, LDMC, SLA, RDMC & RSL compute}
+
+DATABASE2$Leaves_area <- as.numeric(DATABASE2$Leaves_area)
+
+computes <- DATABASE2 %>%
+  slice(-(1:180)) %>% #I select only my data 
+  mutate(LDMC= DryWeight/FreshWeight) %>% 
+  mutate(RDMC= Rootdryweight/Rootfreshweight) %>% 
+  mutate(SLA= Leaves_area/DryWeight) 
+  # mutate(RSL= Roots_area/Rootdryweight)
+
+DATABASE3 <- DATABASE2 %>%
+  slice(1:180) %>%
+  mutate(LDMC= LDMC/100) %>% # pour rattraper l'effaçage de la virgule au 1er chargement des données de Marco
+  mutate(RDMC= RDMC/1000) %>% 
+  mutate(LeafArea= LeafArea/100) %>% 
+  mutate(Leaves_area= Leaves_area/100) %>% 
+  mutate(DryWeight= DryWeight/10) %>% 
+  bind_rows(computes)
+
+write.csv2(DATABASE3, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/DATABASE3.csv")
+  
+```
+
+

@@ -1,0 +1,313 @@
+---
+title: "Stage M2 - Script de terrain"
+author: "Vincyane Badouard"
+date: "18/02/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, Packages}
+library(readr) #lecture du csv
+library(knitr)
+library(tidyverse) 
+library(ggrepel) #texte à distance des points
+library(ggforce) #extension ggplot2
+library(BIOMASS)
+```
+
+```{r, Téné data}
+
+setwd("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire")
+d <- read_csv2(file="data_tree.csv") #ou read_delim(file="data_tree.csv", delim = ";")
+length(unique(d$Vernacular)) # Species number
+
+d <- d %>% 
+  select(-species_scientific_name, -species_vernacular_name, -species1_scientific_name, -species1_vernacular_name, -species_language_code, -species_language_variety, -species1_language_code, -species1_language_variety)
+
+```
+
+# Echantillonage
+
+Sélectionner 30 nouvelles espèces les plus abondantes
+```{r, species selection}
+
+#enlever de ma liste les sp de Marco :
+remove <- c("Acajou blanc",            #créer un vecteur "remove" de ttes ces sp
+"Ako",
+"Asamoiake",
+"Ba",
+"Bete",
+"Bi ou Eyong",
+"Cedrela",
+"Frake / Limba",
+"Fromager",
+"Kaka",
+"Koace Noliba",
+"Kotibe",
+"Koto",
+"Loloti",
+"Lotofa",
+"Ouara grand",
+"Ouossoupalie a fleurs mauves",
+"Papayer",
+"Pepe Angrouafou",
+"Samba")
+
+vernacular <- d %>% 
+  filter(!(Vernacular %in% remove)) %>% # !:contraire ; %in% : contient ?
+  filter(!is.na(Vernacular)) %>% 
+  group_by(Vernacular) %>% #pour réaliser les opérations suivantes par groupes de modalités
+  summarise(N = n()) %>%  #créer une variable résumant les effectifs des éléments de "Vernacular"
+  arrange(desc(N))%>% #Effectifs par ordre décroissant
+  filter(N>15)  %>%   #effectif >15
+  slice(1:30) #Afficher les 30 1ères lignes
+
+
+vernacular
+```
+
+Tirer aléatoirement 15 individus de chaque espèce choisie précédemment et les mapper
+```{r, random sample, cache = T}
+#Espèces choisies :
+remove2 <- c("Eho",				
+"Okoue / nitida",				
+"Adaschia",				
+"Balie",				
+"Bape",		
+"Okoue / polyglacea",				
+"NGavi a gros fruits",				
+"Pore-pore",				
+"Kekemi",				
+"Banaye / heudelotii",			
+"Akatio",				
+"Kekele",				
+"Movingui",				
+"Pouo",				
+"Dede",				
+"Akossika a petites feuilles",				
+"Aboudikro ou Sapelli",				
+"Asan",				
+"Losso",			
+"Akatio / delovoyi",			
+"Banaye / mehadelpha",				
+"Iroko",				
+"Difou",				
+"Emien",				
+"Tombo",				
+"Gaouo",				
+"Dounbourou",				
+"Oba",				
+"Tulipier du Gabon",			
+"Bosse")
+
+
+t <- d %>% 
+  filter(Vernacular %in% remove2) %>% # %in% : contient ?
+  group_by(Vernacular) %>% #pour réaliser les opérations suivantes par modalité
+  top_n(30,dbh) %>% #selectionner les 30 plus grands dbh 
+  sample_n(15, replace = F) %>% # Tirer 15 sans remplacement
+  do(plot = ggplot(.) + # le "." représente le pipe précédent. "do" stocke dans une liste de la table
+       geom_point(aes(x = x, y = y), alpha = 0.3) + 
+       geom_text_repel(aes(x = x, y = y, label = IDtree), size = 4, check_overlap = TRUE, nudge_y = -90) +
+       facet_wrap(~ Vernacular))
+t$plot[30]
+
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/My_species2.png", width=1600, height=933)
+
+d %>% 
+  filter(Vernacular %in% remove2) %>% # %in% : contient ?
+  group_by(Vernacular) %>% #pour réaliser les opérations suivantes par modalité
+  top_n(30,dbh) %>% #selectionner les 30 plus grands dbh 
+  sample_n(15, replace = F) %>% # Tirer 15 sans remplacement
+  ggplot(.) + # le "." représente le pipe précédent. "do" stocke dans une liste de la table
+       geom_point(aes(x = x, y = y), alpha = 0.3) + 
+       geom_text_repel(aes(x = x, y = y, label = IDtree), size = 4, nudge_y = -90) +
+       facet_wrap_paginate(~ Vernacular, nrow = 3, ncol = 5, page = 2) #changer le num de page
+dev.off()
+
+
+```
+
+
+```{r, Bruno option, congruent botanic}
+congruent_bota <- read_csv2(file="congruent_bota.csv")
+congruent_bota <-separate(congruent_bota, IDtree, sep = "_",
+into = c("plot", "carré", "quadrat", "NumTree"), remove = F)  #séparer l'ID pour avoir le n° de plot, remove = F pour garder la colonne IDtree
+congruent_bota$plot <-as.numeric(congruent_bota$plot)
+
+coordonnees <- d %>% 
+  select(x, y, IDtree)
+  
+congruent_bota <- congruent_bota %>% 
+  left_join(coordonnees, by = "IDtree")
+
+planBrunoBota <- congruent_bota %>% 
+  filter(NomVernaculaire %in% c("Akatio", "Kekemi", "Kekele", "Okoue / nitida",
+"Adaschia",				
+"Aboudikro ou Sapelli",				
+"Dede",
+"Pouo",
+"Dounbourou",				
+"Tulipier du Gabon")) %>% # %in% : contient ?
+  group_by(NomVernaculaire) %>% #pour réaliser les opérations suivantes par modalité
+  arrange(plot) %>% 
+  group_by(plot) %>%
+  do(plot = ggplot(.) + # le "." représente le pipe précédent. "do" stocke dans une liste de la table
+       geom_point(aes(x = x, y = y), alpha = 0.3) + 
+       geom_text_repel(aes(x = x, y = y, label = IDtree), size = 4, nudge_y = -5) +
+       geom_text_repel(aes(x = x, y = y, label = NomVernaculaire), size = 4, nudge_y = +5) +              
+       facet_wrap(~ plot))
+
+planBrunoBota$plot[7]
+
+```
+
+
+```{r Marco species - SPAD, plsrs version de script, cache = T}
+
+m <- d %>% 
+  filter(Vernacular %in% remove) %>% # %in% : contient ?
+  group_by(Vernacular) %>% #pour réaliser les opérations suivantes par modalité
+  top_n(30,dbh) %>% #selectionner les 30 plus grands dbh 
+  sample_n(15, replace = F) %>% # Tirer 15 sans remplacement
+  do(plot = ggplot(.) + # le "." représente le pipe précédent. "do" stocke dans une liste de la table
+       geom_point(aes(x = x, y = y), alpha = 0.3) + 
+       geom_text_repel(aes(x = x, y = y, label = IDtree), size = 4, check_overlap = TRUE, nudge_y = -90) +
+       facet_wrap(~ Vernacular))
+m$plot
+
+png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Victor_species.png", width=1600, height=933)
+d %>% 
+  filter(Vernacular %in% remove) %>% # %in% : contient ?
+  group_by(Vernacular) %>% #pour réaliser les opérations suivantes par modalité
+  top_n(30,dbh) %>% #selectionner les 30 plus grands dbh 
+  sample_n(15, replace = F) %>% # Tirer 15 sans remplacement
+  ggplot(.) + # le "." représente le pipe précédent. "do" stocke dans une liste de la table
+       geom_point(aes(x = x, y = y), alpha = 0.3) + 
+       geom_text_repel(aes(x = x, y = y, label = IDtree), size = 4, nudge_y = -90) +
+       facet_wrap(~ Vernacular)
+dev.off()
+
+#By Plot
+SPAD <- d %>% 
+  filter(Vernacular %in% remove) %>% 
+  group_by(Vernacular) %>%
+  top_n(30,dbh) %>% #selectionner les 30 plus grands dbh 
+  sample_n(20, replace = F) %>% # Tirer 15 sans remplacement
+  group_by(plot) %>%
+  do(plot = ggplot(.) + # le "." représente le pipe précédent. "do" stocke dans une liste de la table
+       geom_point(aes(x = x, y = y), alpha = 0.3) + 
+       geom_text_repel(aes(x = x, y = y, label = IDtree), size = 4, nudge_y = -5) +
+       geom_text_repel(aes(x = x, y = y, label = Vernacular), size = 4, nudge_y = +5) +              
+       facet_wrap(~ plot))
+
+SPAD$plot[8]
+
+```
+
+```{r, new_identification}
+new_identification <- read_csv2(file="new_identification.csv")
+new_identification <-separate(new_identification, IDtree, sep = "_",
+into = c("plot", "carré", "quadrat", "NumTree"), remove = F)  #séparer l'ID pour avoir le n° de plot, remove = F pour garder la colonne IDtree
+new_identification$plot <-as.numeric(new_identification$plot)
+coordonnees <- d %>% 
+  select(x, y, IDtree)
+  
+new_identification <- new_identification %>% 
+  left_join(coordonnees, by = "IDtree")
+
+buldozer <- new_identification %>% 
+  filter(vernacular %in% c("Eho",				
+"Okoue_nitida",				
+"Adaschia",				
+"Balie",				
+"Bape",		
+"Okoue / polyglacea",				
+"NGavi a gros fruits",				
+"Pore-pore",				
+"Kekemi",				
+"Banaye / heudelotii",			
+"Akatio",				
+"Kekele",				
+"Movingui",				
+"Pouo",				
+"Dede",				
+"Akossika a petites feuilles",				
+"Aboudikro ou Sapelli",				
+"Asan",				
+"Losso",			
+"Akatio / delovoyi",			
+"Banaye / mehadelpha",				
+"Iroko",				
+"Difou",				
+"Emien",				
+"Tombo",				
+"Gaouo",				
+"Dounbourou",				
+"Oba",				
+"Tulipier du Gabon",			
+"Bosse", "Ouara.grand", "Ouossoupalie.a.fleurs.mauves", "Pepe.Angrouafou")) %>% 
+  filter(!is.na(vernacular)) %>% 
+  group_by(plot) %>%
+  do(plot = ggplot(.) + # le "." représente le pipe précédent. "do" stocke dans une liste de la table
+       geom_point(aes(x = x, y = y), alpha = 0.3) + 
+       geom_text_repel(aes(x = x, y = y, label = IDtree), size = 4, nudge_y = -5) +
+       geom_text_repel(aes(x = x, y = y, label = vernacular), size = 4, nudge_y = +5) +              
+       facet_wrap(~ plot))
+
+buldozer$plot[20]
+```
+
+# Database preparation
+
+Add :
+- 3 individuals * 3 orientations /new species
+- their "treeID"	& "sampleID"
+- their scientific names
+
+
+```{r, Database preparation}
+
+FT <- read_delim(file="data_FT.csv", delim = ";") # Initial traits's database
+
+my <- vernacular %>% 
+  bind_rows(.,vernacular) %>% 
+  bind_rows(.,vernacular) %>%
+  bind_rows(.,vernacular) %>% 
+  bind_rows(.,vernacular) %>%
+  bind_rows(.,vernacular) %>% 
+  bind_rows(.,vernacular) %>%
+  bind_rows(.,vernacular) %>% 
+  bind_rows(.,vernacular) %>%
+  mutate(Vernacular = factor(as.character(Vernacular))) %>% #régler prblm du mauvais groupement des sp de n=67 en transformant vernacular de character à factor 
+  arrange(Vernacular) %>% # maintenant on peut ranger par ordre alphabetique 
+  arrange(desc(N))
+
+
+
+
+  
+DATABASE <- FT %>% 
+  rename (Vernacular = Vernaculier) %>% 
+  bind_rows(my) %>% 
+  cbind(., TreeID = c("A", "A", "A", "B", "B", "B", "C", "C", "C"), SampleID = c(1,2,3)) %>% 
+  select(-treeID, -sampleID, -X25) %>% 
+  select(c(N, Vernacular, TreeID, SampleID, "ID TRY" : "Seed dry mass (26)"))
+
+   
+scientific <- d %>% 
+  select(Vernacular, genus, species) %>% 
+  group_by(Vernacular, genus, species) %>% 
+  summarise()
+
+DATABASE <- DATABASE %>% 
+  left_join(scientific, by = "Vernacular") %>% 
+  select(-Genus, -Species) %>% 
+  select(c(N, Vernacular,TreeID, SampleID, "ID TRY", ScientificName, Family, genus, species, "RDMC " :"Seed dry mass (26)"))
+
+write.csv2(DATABASE, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/DATABASE.csv")
+
+```

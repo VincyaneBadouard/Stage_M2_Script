@@ -1,0 +1,259 @@
+---
+title: "Data exploration (Stage M2)"
+author: "Vincyane Badouard"
+date: "14/07/2020"
+output: html_document
+---
+
+
+```{r Packages}
+
+library(tidyverse)
+library(reshape2)
+library(Hmisc) #rcorr
+library(egg)#ggarrange
+library(ggpubr)
+library(corrplot)
+library(RColorBrewer)
+
+```
+
+We have computed diversity indices at 3 different scales :
+ - Taxonomic
+ - Phylogenetic
+ - Functional
+ 
+Each type is calculated for each plot.  
+
+
+```{r Covariants data base}
+data_subplot <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/data_subplot.csv", 
+    ";", escape_double = FALSE, locale = locale(decimal_mark = ","), 
+    trim_ws = TRUE)
+
+
+
+covariantsdata <- data_subplot %>% 
+   select(-biomass, -X1, -plot_subplot, -biomass, 
+          -shannon_ind, -simpson_ind, -edge_dist_norm, -mean_dist_seedsource) %>% 
+  group_by(plot) %>% 
+  mutate(prop_ced = sum(prop_ced)) %>% 
+  mutate(prop_soil1 = sum(prop_soil1)) %>% 
+  mutate(prop_soil2 = sum(prop_soil2)) %>%
+  mutate(prop_soil3 = sum(prop_soil3)) %>% 
+  mutate(prop_fire = sum(prop_fire)) %>% 
+  mutate(prop_ba_removed = sum(prop_ba_removed)) %>% 
+  ungroup() %>%
+  distinct() %>% 
+  arrange(plot) %>% 
+  mutate(plot = as.character(as.numeric(plot))) %>%
+  left_join(Diversitytable_taxshan, by = "plot") %>% # Taxonomic diversity values
+  left_join(Diversitytable_phyloshan, by = "plot") %>%   # Phylogenetic diversity values
+  left_join(Diversitytable_fctnalshan, by = "plot")   # Functional diversity values
+
+
+standardcovariantsdata <- covariantsdata %>% 
+  mutate_at(c("prop_ced", "prop_soil1", "prop_soil2", "prop_soil3", "prop_fire", "prop_ba_removed"),
+            funs(as.vector(scale(.)))) #To standardize variables to put them at the same scale and to keep theta0 as mean of the response variable.
+ 
+```
+
+
+```{r Covariants-diversity relation visualisation (Regressions)}
+
+esquisse::esquisser()
+
+# Wide-format to long-format -> facet_wrap/grid
+covariantsdataLongformat <- melt(covariantsdata)
+
+# Double 'melt' -> long-format -> facet_wrap/grid
+covariantsdataLongformat %>%
+  dcast(plot ~ variable) %>% 
+  melt(id.vars = c("plot",
+                   "DivTaxo_Shann", "DivPhylo_Shann", "DivFctnal_Shann"),
+                 variable.name = "explanatory",
+                 value.name = "explanatory_value") %>% 
+  melt(id.vars = c("plot",
+                   "explanatory", "explanatory_value"),
+                 variable.name = "response",
+                 value.name = "response_value") %>% 
+ ggplot() +
+ aes(x = explanatory_value, 
+     y = response_value) +
+  geom_point(size = 2.1) +
+  labs(x = "Explanatory value", y = "Response value") +
+ theme_minimal()+
+  geom_smooth(method = "lm") +
+  ggpubr::stat_cor()+
+  facet_grid(response ~ explanatory, scales = "free")
+
+```
+
+
+```{r Variables density curve}
+
+# Variables distribution under density curve
+covariantsdataLongformat %>%
+ ggplot() +
+ aes(x = value) +
+ geom_density(adjust = 1L, fill = "#3e4a89") + # default adjustment
+ theme_minimal() +
+ facet_wrap(vars(variable), scales = "free")
+
+
+# Variables distribution under density curve & histogram
+covariantsdataLongformat %>%
+  ggplot() +
+ aes(x = value) +
+  geom_histogram(aes(y=..density..), bins = 30L, fill = "#3e4a89") +
+ geom_density(alpha = .2, fill = "antiquewhite3") + # default adjustment
+ labs(x = "Value", y = "Density") +
+  theme_minimal() +
+ facet_wrap(vars(variable), scales = "free")
+
+```
+  * DivTaxo_Shan, DivPhylo_Shan & prop_fire can be considered as Normal variables
+  * prop_ced can be considered as a logNormal variable
+  * prop_ba_removed seems to be binary : "non-exploited" & "exploited", and a small distribution in the "exploited" category, which can be neglected.
+  Let's try to propose a factorial version of this variable :
+  
+```{r Add "Sylviculture" : a factorial version}
+
+covariantsdata_plus1 <- covariantsdata %>% 
+  mutate(Sylviculture = ifelse(prop_ba_removed == 0.000, "0", "1")) %>% 
+  mutate(Sylviculture = as.factor(as.character(Sylviculture)))
+
+covariantsdata_plus1Longformat <- covariantsdata_plus1 %>% 
+  select(plot, Sylviculture) %>% 
+  left_join((covariantsdataLongformat))
+
+# Variables distribution histogram with/without sylviculture
+covariantsdata_plus1Longformat %>%
+ ggplot() +
+ aes(x = value, fill = Sylviculture) +
+ geom_histogram(adjust = 1L) + # default adjustment
+ theme_minimal() +
+ facet_wrap(vars(variable), scales = "free")
+
+
+# Variables distribution under density curve with/without sylviculture
+covariantsdata_plus1Longformat %>%
+ ggplot() +
+ aes(x = value, fill = Sylviculture) +
+ geom_density(adjust = 1L, alpha = .6,) + # default adjustment
+ theme_minimal() +
+ facet_wrap(vars(variable), scales = "free")
+
+```
+Sylviculture presence influence the other variables : fire, Cedrela & soil proportions
+but not the response variables.
+
+```{r, Correlation tests}
+
+# A quantitative traits base:
+baseforcor_var <- covariantsdata %>% 
+  select(-plot)
+#pas besoin de tester la normalité : n>30.
+CorMatrix_variables <- round(cor(baseforcor_var), digits = 2) # matrice de corrélation, avec 2 décimales
+
+CorMatrixS_variables <- rcorr(as.matrix(baseforcor_var))
+CorMatrix_variables <- CorMatrixS_variables$r #correlations
+Pval_corr_variables <- CorMatrixS_variables$P #p-values
+
+# Correlation plot:
+corrplot(CorMatrix_variables, method="number", type="lower", col=brewer.pal(n=8, name="PuOr"), tl.col="black", tl.srt=25)
+# , p.mat = Pval_corr_variables, sig.level = 0.05) #with crosses for p-values > 0.05.
+
+```
+
+```{r Regressions with/without sylviculture}
+
+# Double 'melt' -> long-format -> facet_wrap/grid
+covariantsdata_plus1Longformat %>%
+  dcast(plot + Sylviculture ~ variable) %>% 
+  melt(id.vars = c("plot", "Sylviculture", 
+                             "DivTaxo_Shann", "DivPhylo_Shann", "DivFctnal_Shann"),
+                 variable.name = "explanatory",
+                 value.name = "explanatory_value") %>% 
+  melt(id.vars = c("plot", "Sylviculture", 
+                             "explanatory", "explanatory_value"),
+                 variable.name = "response",
+                 value.name = "response_value") %>% 
+ ggplot() +
+ aes(x = explanatory_value, 
+     y = response_value,
+     fill = Sylviculture, col = Sylviculture) +
+  geom_point(size = 2.1) +
+  labs(x = "Explanatory value", y = "Response value") +
+ theme_minimal()+
+  geom_smooth(method = "lm") +
+  ggpubr::stat_cor()+
+  facet_grid(response ~ explanatory, scales = "free")
+
+```
+There are interactions between Sylviculture and Cedrela/soils/fire
+And for between the other covariants ?
+
+```{r Regressions with fire & Cedrela categorized}
+
+#Split Cedrela and fire variables in classes :
+covariantsdata_classes <- covariantsdata_plus1 %>% 
+  mutate(Cedrela_classes = gtools::quantcut(prop_ced, 3)) %>% 
+  mutate(Fire_classes = gtools::quantcut(prop_fire, 3)) 
+
+write.csv2(covariantsdata_classes, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/covariantsdata_classes.csv")
+
+covariantsdata_classesLongformat <- covariantsdata_classes %>% 
+  select(plot, Sylviculture, Cedrela_classes, Fire_classes) %>% 
+  left_join((covariantsdataLongformat))
+
+# Under Cedrela proportion :
+covariantsdata_classesLongformat %>%
+  dcast(plot + Sylviculture + Cedrela_classes + Fire_classes ~ variable) %>% 
+  melt(id.vars = c("plot", "Sylviculture", "Cedrela_classes", "Fire_classes", 
+                             "DivTaxo_Shann", "DivPhylo_Shann", "DivFctnal_Shann"),
+                 variable.name = "explanatory",
+                 value.name = "explanatory_value") %>% 
+  melt(id.vars = c("plot", "Sylviculture", "Cedrela_classes", "Fire_classes",
+                             "explanatory", "explanatory_value"),
+                 variable.name = "response",
+                 value.name = "response_value") %>% 
+ ggplot() +
+ aes(x = explanatory_value, 
+     y = response_value, col = Cedrela_classes) +
+  geom_point(size = 2.1) +
+  labs(x = "Explanatory value", y = "Response value") +
+ theme_minimal()+
+  geom_smooth(method = "lm") +
+  ggpubr::stat_cor()+
+  facet_grid(response ~ explanatory, scales = "free")
+
+# Under Fire proportion :
+covariantsdata_classesLongformat %>%
+  dcast(plot + Sylviculture + Cedrela_classes + Fire_classes ~ variable) %>% 
+  melt(id.vars = c("plot", "Sylviculture", "Cedrela_classes", "Fire_classes", 
+                             "DivTaxo_Shann", "DivPhylo_Shann", "DivFctnal_Shann"),
+                 variable.name = "explanatory",
+                 value.name = "explanatory_value") %>% 
+  melt(id.vars = c("plot", "Sylviculture", "Cedrela_classes", "Fire_classes",
+                             "explanatory", "explanatory_value"),
+                 variable.name = "response",
+                 value.name = "response_value") %>% 
+ ggplot() +
+ aes(x = explanatory_value, 
+     y = response_value, col = Fire_classes) +
+  geom_point(size = 2.1) +
+  labs(x = "Explanatory value", y = "Response value") +
+ theme_minimal()+
+  geom_smooth(method = "lm") +
+  ggpubr::stat_cor()+
+  facet_grid(response ~ explanatory, scales = "free")
+ 
+```
+There are interactions between Cedrela and soils/fire/sylviculture
+
+* There is a positiv effect of fire & sylviculture on diversity when Cedrela proportion is low.
+* Strong Cedrela proportion cancels fire  & sylviculture effects on diversity. 
+* Cedrela intermediary-class allows higher diversity values.
+
+same response of taxo & phylo

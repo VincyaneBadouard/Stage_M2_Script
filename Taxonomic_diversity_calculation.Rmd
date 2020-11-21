@@ -1,0 +1,66 @@
+---
+title: "Calculation of taxonomic diversity indices"
+author: "Vincyane Badouard"
+date: "09/07/2020"
+output: html_document
+---
+
+```{r Abondances vector creation}
+
+# Abondances vector for all plots :
+abondperplot <- Data_Tene %>% 
+  filter(!is.na(genus)) %>% #remove non-identified species
+  group_by(genus, species, plot) %>% #by species & plot
+  summarise(N = n()) %>%  #abundances
+  arrange(plot, desc(N)) %>% 
+  ungroup(genus, species) %>% 
+  filter(!(genus == "Cedrela")) %>% #Remove Cedrela of the response variable because it will be a covariant
+  unite(genus, species, col = "ScientificName", sep = " ", remove = T)
+
+
+#create a list with a table for each plot :
+abondplotslist <- split(abondperplot, abondperplot$plot) #separate database under a factor
+
+#understand this list :
+class(abondplotslist) #it's a list
+str(abondplotslist,1) #25 tables
+
+```
+
+```{r Taxonomic diversity indices computation}
+
+# For plot 1 : 
+bcDiversity(abondplotslist$`1`$N, q = 1, Correction = "Best", CheckArguments = T) #in the a list we take N column of the table 1
+
+# Now for each plot :
+##Loop method :
+DivTaxo_Shann <- abondplotslist #create an object of the list size
+
+for(p in 1:length(abondplotslist)){  #loop for all p from 1 to the lenght of the list (= plots number)
+  DivTaxo_Shann[[p]] <- bcDiversity(abondplotslist[[p]]$N, q = 1, Correction = "Best", CheckArguments = T)
+unlist(DivTaxo_Shann)# for that is not a list
+}
+
+class(unlist(DivTaxo_Shann)) #numeric
+
+#Function method :
+DivTaxo_Shann <- lapply(abondplotslist, function(element) bcDiversity(element$N, q = 1, Correction = "Best", CheckArguments = T))
+
+
+# Shannon (q=1)
+# Bias coorection : "Best" = "UnveilJ" : jacknife unveiled by Marcon(2015). Database specific. 
+# element$N : abondances per plot (numeric vector)
+
+```
+
+```{r Put values in a table}
+Diversitytable_taxshan <- DivTaxo_Shann %>% 
+  as.tibble(.) %>% 
+  t() %>% #transpose romws & columns
+  as.tibble(.) %>%
+  rownames_to_column(var= "plot") %>% 
+  rename(DivTaxo_Shann=V1)
+
+summary(Diversitytable_taxshan)
+```
+

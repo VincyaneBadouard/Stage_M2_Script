@@ -1,0 +1,177 @@
+---
+title: "Calculation of phylogenetic diversity indices"
+author: "Vincyane Badouard"
+date: "08/07/2020"
+output: html_document
+---
+
+```{r Packages}
+
+library("phytools")
+library(entropart)
+```
+
+Mes données :
+Doivent contenir ces colonnes:
+* species : nom sciencifique (genre+sp)
+* genus
+* family
+
+```{r My data}
+
+#exemple fourni par la fonction :
+example<-read.csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Biblio/V.PhyloMaker_Rfunction/example.splist.csv",header=T)
+example
+
+dataphylotree <- New_verna_family %>% 
+  filter(!is.na(genus)) %>% #remove non-identified species
+  unite(genus, species, col = "ScientificName", sep = " ", remove = F) %>% 
+  select(-species) %>% 
+  rename(species = ScientificName)
+
+```
+
+
+```{r V.PhyloMaker_Rfunction}
+
+source("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Biblio/V.PhyloMaker_Rfunction/R_codes for function S.PhyloMaker.txt") # lance un fichier dans R, en l'occurence charge la fonction
+
+
+
+#arbre complet des Angiospermes dans lequel la fonction va puiser :
+phylo <- read.tree("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Biblio/V.PhyloMaker_Rfunction/PhytoPhylo.tre")
+nodes <- read.csv("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Biblio/V.PhyloMaker_Rfunction/nodes.csv", header=T)
+
+#Application de la fonction :
+#"splist" dégage seulement les sp qui m'interessent 
+TENEtree <- S.PhyloMaker(splist = dataphylotree, tree = phylo, nodes = nodes) #création de mon arbre
+
+# Show the phylogenies under 3 scenarios.
+par(mfrow = c(1,3),mar = c(0,0,1,0))
+plot(result$Scenario.1,cex = 1.1,main = "Scenarion One")
+plot(result$Scenario.2,cex = 1.1,main ="Scenarion Two")
+plot(result$Scenario.3,cex = 1.1,main ="Scenarion Three")
+```
+
+Je souhaite obtenir un arbre de la composition floristique de chaque parcelle,
+A incorporer de la calcul de diversité phylogénétique de chaque parcelle.
+
+Essayons d'injecter la liste de composition floristique par plot dans la fonction calculant les arbres
+
+```{r Générer des arbres (de classe "phylo") à partir d'une liste de composition floristique}
+
+# My data to generate treeS :
+dataphylotree <- Data_Tene %>% #species composition table for each plot
+  select(genus, species, family, plot) %>% 
+  distinct() %>% 
+  filter(!is.na(genus)) %>% #remove non-identified species
+  filter(!(genus == "Cedrela")) %>% #Remove Cedrela of the response variable because it will be a covariant
+  unite(genus, species, col = "ScientificName", sep = " ", remove = F) %>% 
+  select(-species) %>% 
+  rename(species = ScientificName)
+
+#create a list with a table for each plot :
+dataphylotreelist <- split(dataphylotree, dataphylotree$plot)
+
+#a tree for each plot :
+# treeperplot <- lapply(dataphylotreelist, function(element) S.PhyloMaker(splist=element, tree=phylo, nodes=nodes))
+# save(treeperplot, file = "treeperplot.Rdata")
+load("treeperplot.Rdata")
+treeplot2 <- S.PhyloMaker(splist=dataphylotreelist$`2`, tree=phylo, nodes=nodes)
+treeperplot[2] <- treeplot2
+```
+
+```{r Display plot's tree}
+
+treeplot2 <- S.PhyloMaker(splist=dataphylotreelist$`2`, tree=phylo, nodes=nodes)
+treeplot2 <- lapply(dataphylotreelist[2], function(element) 
+  S.PhyloMaker(splist=element, tree=phylo, nodes=nodes))
+
+par(mfrow=c(1,3),mar=c(0,0,1,0))       # show the phylogenies of the three scenarios.
+plot(treeperplot$`5`$Scenario.1,cex=1.1,main="Scenarion One")
+plot(treeplot2$`2`$Scenario.2,cex=1.1,main="Scenarion Two")
+plot(treeperplot$`2`$Scenario.2,cex=1.1,main="Scenarion Two")
+plot(treeperplot$`5`$Scenario.3,cex=1.1,main="Scenarion Three")
+# Nous allons choisir le scénario 2 car dans le calul de disversité l'abre doit être binaire (ne pas comporter de rateau). Le scénario 1 crée un rateau avec les sp absentes de l'arbre des angiospermes, le 2 les place au hasard dans leur famille ou genre, le 3 crée toujours des rateaux malgré sa recherche d'information dans 'Phylomatic' & 'BLADJ'  
+```
+
+```{r Rendre les arbres ultrametriques et binaires}
+
+# Forces A Phylogenetic Tree To Be Ultrametric (same branch lengths)
+UltrametricTreeperplot <- lapply(treeperplot, function(element) force.ultrametric(element$Scenario.2, method="extend"))
+
+# resolve multichotomies (rateaux) (-> binary tree)
+BinaryTreeperplot <- lapply(UltrametricTreeperplot, function(element) multi2di(element, random = F)) #resolve multichotomies in the order they appear in the tree
+
+# check that the trees are binary
+lapply(BinaryTreeperplot, function(element) is.binary.tree(element))
+
+plot(BinaryTreeperplot$`2`,cex=1.1,main="Scenarion two")
+
+```
+
+
+```{r Phylogenetic diversity indices computation}
+
+# 'bcPhyloDiversity' function necessites a 'NAMED VECTOR' as species abundances numeric vector (non specified in R help's function)
+
+
+#add "_" enter genus and species name in ScientificName to COORESPOND AT THE TREE'S TIP.LABELS 
+sep_ <- Data_Tene %>% 
+  filter(!is.na(genus)) %>% #remove non-identified species
+  group_by(genus, species, plot) %>% #by species & plot
+  summarise(N = n()) %>%  #abundances
+  arrange(plot, desc(N)) %>% 
+  ungroup(genus, species) %>% 
+  filter(!(genus == "Cedrela")) %>% #Remove Cedrela of the response variable because it will be a covariant
+  unite(genus, species, col = "ScientificName", sep = "_", remove = T)
+
+
+#create a new list :
+abondplotslistsep_ <- split(sep_, sep_$plot)
+
+# Species abundances numeric NAMED vector
+Namedvector <- lapply(abondplotslistsep_,
+                      function(element){
+                         Namedvector <- element$N   # operation1
+                         names(Namedvector) <- element$ScientificName # operation2
+                         return(Namedvector) # préciser ce que la fonction doit renvoyer
+})
+
+str(Namedvector)
+
+# SCRIPTS DE LOCALISATION DE PROBLEMES : 
+#i <- 1 
+# DivPhylo_plot1 <- bcPhyloDiversity(Ns = abondplotslist[[i]]$N,
+#                    Tree = BinaryTreeperplot[[i]],
+#                    q = 1, Normalize = T,
+#                    Correction = "Best", CheckArguments = T)
+# 
+# DivPhylo_Shann <- mapply(function(X,Y) {
+#   print(X)
+#   try(bcPhyloDiversity(Ns = X,
+#                    Tree = Y,
+#                    q = 1, Normalize = T,
+#                    Correction = "Best", CheckArguments = T))
+#   }, X=Namedvector, Y=BinaryTreeperplot)
+
+DivPhylo_Shann <- mapply(function(X,Y) {
+  bcPhyloDiversity(Ns = X,
+                   Tree = Y,
+                   q = 1, Normalize = T,
+                   Correction = "Best", CheckArguments = T)
+  }, X=Namedvector, Y=BinaryTreeperplot, SIMPLIFY = F) #SIMPLIFY = F : laisse la structure initiale de la liste (par plot dans ce cas)
+
+DivPhylo_Shann_values <- lapply(DivPhylo_Shann, getElement, "Total")#extraction de la valeur (Total) de l'indice grace à la fonction "getElement"(='$')
+
+```
+
+```{r Put phylo values in a table}
+Diversitytable_phyloshan <- DivPhylo_Shann_values %>% 
+  as_tibble(.) %>% 
+  t() %>% #transpose romws & columns
+  as.tibble(.) %>%
+  rownames_to_column(var= "plot") %>% 
+  rename(DivPhylo_Shann=V1)
+```
+

@@ -1,0 +1,198 @@
+---
+title: "Functional diversity"
+author: "Vincyane Badouard"
+date: "21/07/2020"
+output: html_document
+---
+
+
+# Diversity indices calculation
+## Calculation of functional diversity indices
+
+https://daijiang.name/en/2014/05/11/functional-diversity-in-r/
+
+0) Complete missing values with *MICE*
+1) Take only traits
+2) Compute species mean of each trait
+3) Standardize all the traits (*scale()*) because their units are different
+4) Obtain a dissimylarity matrix *for quanti & quali variables* : Gower method (*gowdis()*) 
+5) Create a dendrogram (*hclust()*)
+  - choose the agglomeration method to compute it (UPGMA) (ou tt faire et calculer leur Norme2 (pas corrélation cophénétique)
+6) Test if it's utrametric & binary or force to be
+7) Create a list of species composition table of all the plots (with only the species present in the traits base or not) 
+8) Create a subset of this tree for each plot according to its species composition
+9)Compute functional diversity indices
+
+```{r Packages}
+
+library(tidyverse) 
+library(mice)
+library(FD)
+library(phylobase)
+library(entropart)
+
+```
+
+```{r}
+Traitsbase_means <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Traitsbase_fordiversity.csv", 
+    ";", escape_double = FALSE, col_types = cols(Deciduousness = col_character()), 
+    locale = locale(decimal_mark = ","), 
+    trim_ws = TRUE)
+```
+
+
+### Distance matrix & dendrogram
+
+Obtain a distance matrix
+```{r Obtain a distance matrix}
+
+#Standardize numeric traits
+Traitsbase_stand <- Traitsbase_means %>% 
+  mutate_if(is.numeric,
+            funs(as.vector(scale(.)))) %>% 
+  column_to_rownames(., var = "ScientificName") #put species name in the column "rownames"
+
+DistMatrix <- gowdis(Traitsbase_stand)
+#Gower for quanti & quali variables
+
+```
+
+Create a dendrogram (utrametric)
+```{r Create a dendrogram (utrametric)}
+
+
+FctDendrogram <-hclust(DistMatrix, method = "average")
+# UPGMA : arithmetical average
+plot(FctDendrogram, main="Functional dendrogram")
+
+UltrametricMatrix <- cophenetic(FctDendrogram)
+
+class(FctDendrogram) #it is an object of "hclust" class
+FctDendrogram <- as.phylo(FctDendrogram)#transform in "phylo class" for some following functions
+is.ultrametric(FctDendrogram) #It's an ultrametric tree
+is.binary.tree(FctDendrogram) #It's a binary tree
+plot(FctDendrogram, main="Functional utrametric tree")
+
+FctDendrogram_phylo4 <- as(FctDendrogram, "phylo4")#transform in "phylo4 class" for "subset" functions
+
+```
+
+A tree for each plot
+```{r a tree for each plot}
+
+# Create a vector with only species in the functional dendrogram :
+DendogramSpecies <- Traitsbase_means$ScientificName
+
+Data_Tene <- read_delim("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/data_final.csv",
+    ";", escape_double = FALSE, locale = locale(decimal_mark = ","),
+    trim_ws = TRUE)
+Data_Tene <- Data_Tene %>%
+  rename(genus = genus.y) %>%
+  rename(species = species.y)
+
+# list with a table for each plot : 
+datafctnaltree <- Data_Tene %>% #species composition table for each plot
+  select(genus, species, family, plot) %>% 
+  distinct() %>% 
+  filter(!is.na(genus)) %>% #remove non-identified species
+  filter(!(genus == "Cedrela")) %>% #Remove Cedrela of the response variable because it will be a covariant
+  filter(!(species == "papaya")) %>%
+  unite(genus, species, col = "ScientificName", sep = " ", remove = F) %>% 
+  unite(genus, species, col = "Scientific_Name", sep = " ", remove = F) %>% 
+  filter(ScientificName %in% DendogramSpecies)
+
+#create a list with a table for each plot :
+datafctnaltreelist <- split(datafctnaltree, datafctnaltree$plot)
+
+datafctnaltreelist <- lapply(datafctnaltreelist, function(element) column_to_rownames(element, var = "Scientific_Name"))  #put species name in the column "rownames" for 'subset' function
+
+
+#a dendrogram for each plot :
+fctnalTreeperplot <- lapply(datafctnaltreelist, function(element) subset(FctDendrogram_phylo4, tips.include = element$ScientificName))
+save(fctnalTreeperplot, file = "fctnalTreeperplot.Rdata")
+# load("fctnalTreeperplot.Rdata")
+
+
+```
+
+Functional diversity indices computation
+```{r Functional diversity indices computation}
+
+# Abondances vector for all plots :
+abondperplot <- Data_Tene %>% 
+  filter(!is.na(genus)) %>% #remove non-identified species
+  group_by(genus, species, plot) %>% #by species & plot
+  summarise(N = n()) %>%  #abundances
+  arrange(plot, desc(N)) %>% 
+  ungroup(genus, species) %>% 
+  filter(!(genus == "Cedrela")) %>% #Remove Cedrela of the response variable because it will be a covariant
+  filter(!(species == "papaya")) %>%
+  unite(genus, species, col = "ScientificName", sep = " ", remove = T)
+
+#create a list with a table for each plot :
+abondplotslist <- split(abondperplot, abondperplot$plot) #separate database under a factor
+
+
+# For fctnal diversity specificly (dendrogram species = abondances vector species) :
+ # Abondances vector 
+abondperplotofdendro <- abondperplot %>% 
+  filter(ScientificName %in% DendogramSpecies)
+
+ #list for "rao" function (dendrogram species = abondances vector species)
+abondperplotofdendrolist <- split(abondperplotofdendro, abondperplotofdendro$plot)
+
+
+
+# 'bcPhyloDiversity' function necessites a 'NAMED VECTOR' as species abundances numeric vector (non specified in R help's function) :
+
+
+# Species abundances numeric NAMED vector
+Namedvector_fctnofdendro <- lapply(abondperplotofdendrolist,
+                      function(element){
+                         Namedvector_fctnofdendro <- element$N   # operation1
+                         names(Namedvector_fctnofdendro) <- element$ScientificName # operation2
+                         return(Namedvector_fctnofdendro) # préciser ce que la fonction doit renvoyer
+})
+
+fctnalTreeperplot <- lapply(fctnalTreeperplot, function(element) as(element, "phylo"))#transform in "phylo class" to compute diversity indices
+
+# 'bcPhyloDiversity' function version :
+DivFctnal_Shann <- mapply(function(X,Y) {
+  bcPhyloDiversity(Ns = X,
+                   Tree = Y,
+                   q = 1, Normalize = T,
+                   Correction = "Best", CheckArguments = T)
+  }, X=Namedvector_fctnofdendro, Y=fctnalTreeperplot, SIMPLIFY = F) #SIMPLIFY = F : laisse la structure initiale de la liste (par plot dans ce cas)
+
+DivFctnal_Shann_values <- lapply(DivFctnal_Shann, getElement, "Total")#extraction de la valeur (Total) de l'indice grace à la fonction "getElement"(='$')
+
+# 'bcRao' (Simpson) function version :
+DivFctnal_Shann_Rao <- mapply(function(X,Y) {
+  bcRao(Ns = X,
+        Tree = Y,
+        Correction = "Lande", CheckArguments = T) #"Lande", the default value (equivalent to "Best")
+  }, X = Namedvector_fctnofdendro, Y = fctnalTreeperplot, SIMPLIFY = F)
+
+```
+
+Put values in a table
+```{r Put fctnal values in a table}
+#'bcPhyloDiversity' function
+Diversitytable_fctnalshan <- DivFctnal_Shann_values %>% 
+  as_tibble(.) %>% 
+  t() %>% #transpose romws & columns
+  as.tibble(.) %>%
+  rownames_to_column(var= "plot") %>% 
+  rename(DivFctnal_Shann=V1)
+
+# 'bcRao' (Simpson) function
+Diversitytable_fctnalshanRao <- DivFctnal_Shann_Rao %>% 
+  as_tibble(.) %>% 
+  t() %>% #transpose romws & columns
+  as.tibble(.) %>%
+  rownames_to_column(var= "plot") %>% 
+  rename(DivFctnal_Rao=V1)
+
+summary(Diversitytable_fctnalshan) #min: 3.778 ; Max: 8.642
+
+```

@@ -1,0 +1,134 @@
+---
+title: "Roots_area calculation"
+author: "Vincyane Badouard"
+date: "26/05/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(stringr)
+library(sf)
+library(raster)#Geographic data (shapefile(.shp))
+library(maptools)
+library(rgdal)
+library(cmgo) #DIEU
+```
+
+
+```{r, OTB : de TIFF à Shapefile}
+otbcli <- function(command, ...) {
+   path_otb="C:/Users/Utilisateur/Desktop/OTB-7.1.0-Win64/OTB-7.1.0-Win64/"
+   dots <- list(...)
+   ndots <- names(dots)
+   ndots[ndots!=""]<-paste0("-",ndots[ndots!=""])
+   dots[sapply(dots,is.character)] <- paste0("\"",dots[sapply(dots,is.character)],"\"")
+   cmd <- normalizePath(str_glue("{path_otb}/bin/otbcli_{command}"),mustWork = FALSE)
+   prm <- paste(ndots,dots,collapse=" ")
+   cmd <- str_glue("{cmd} {prm}")
+   shell(cmd)
+}
+
+a <- otbcli(
+   "ConnectedComponentSegmentation",
+   #    "in"=normalizePath(str_glue("2_ROADS/{folders}/{filename}_raw.tif")),
+   # out=normalizePath(str_glue("2_ROADS/{folders}/{filename}_roads.shp"),mustWork = FALSE),
+   "in" = normalizePath(str_glue("TERRAIN/Scans/Roots/Treatments/Image_traited/TIFF/Aboudikro 1 R1 001.tif")),
+   out= normalizePath(str_glue("TERRAIN/Scans/Roots/Treatments/Image_traited/TIFF/Root1.shp") ,mustWork = FALSE),
+   mask = "(b1>0)",
+   expr = "distance<1",
+   minsize = 10,
+   obia = "SHAPE_Elongation>2"
+)
+
+```
+
+```{r, visualisation shapefile & raster}
+
+Roots_shp <- shapefile("TERRAIN/Scans/Roots/Treatments/Image_traited/TIFF/Root1.shp") #To read shapefile format
+plot(Roots_shp)
+summary(Roots_shp)
+coord <- coordinates(Roots_shp)
+plot(coord)
+
+imager <- raster("TERRAIN/Scans/Roots/Treatments/Image_traited/TIFF/Aboudikro 1 R1 001.tif")
+
+plot(imager) ; plot(Roots_shp, add = T, col = "red")#superposer raster et shapefile
+
+plot(Roots_shp, col = "red")
+
+area(Roots_shp)
+plot(subset(Roots_shp, area(Roots_shp) > 1408))
+subRoots <- subset(Roots_shp, area(Roots_shp) > 1410)
+
+```
+
+
+```{r, elongation function}
+# Elongation d'un polygon = petit côté/ grand côté. Compris entre 0 & 1 (pas ça que je veux)
+st_elongation <- function(x) {
+  # adapted from momocs package
+  unlist(lapply(st_geometry(x), function(x) { #manipulation de la géométrie du shapefile
+    coo <- st_coordinates(x)[,1:2] #réccupérer les coordonnées
+    coo <- coo %*% svd(var(coo))$u #Compute the singular-value decomposition of a rectangular matrix.
+    d <- apply(coo, 2, range)
+    d <- abs(d[2, ] - d[1, ])
+    1 - d[2]/d[1]
+  }))
+}
+```
+
+
+```{r, sf package}
+## Ici tu rentres ton shapefile
+degrad_filled <- st_as_sf(Roots_shp) #simplification(sf)du shapefile en une table 
+degrad_filled$area <- as.numeric(st_area(degrad_filled)) # mesure des surfaces (en euclidien par défaut)
+degrad_filled$elongation <- st_elongation(degrad_filled) # mesure de l'"élongation"
+degrad_filled$distance <- st_distance(degrad_filled, by_element = F) # mesure des longueurs
+degrad_filled$coordinates <- st_coordinates(degrad_filled)#marche pas
+
+ST_Dump(degrad_filled)
+# tolerance = 
+#st_length ne fonctionne pas avec des polygons
+#FID = object ID
+#crs : spécifier le syst de coordonnées
+
+```
+
+
+```{r, CMGO}
+# set your working directory 
+setwd("C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Scans/Roots/Treatments/Image_traited") # in that folder an "input" folder must exist which contains one or more files with point data
+
+# load parameter
+par = CM.par()
+par$bank.interpolate.max.dist = 4 # set roughly to your expected channel width
+
+# load data assuming your file is lying in directory "input"
+cmgo.obj = CM.ini(NULL, par)
+
+# Generate a polygon from input data and plot // Fig. 1b
+cmgo.obj = CM.generatePolygon(cmgo.obj)
+
+# Generate the voronoi polygons and calculate the centerlin  // Fig. 1c-e
+cmgo.obj = CM.calculateCenterline(cmgo.obj)
+
+# Process the centerline (generate width) // Fig. 1f-g
+cmgo.obj = CM.processCenterline(cmgo.obj)
+
+```
+
+```{r}
+crs <- '+proj=longlat +datum=NAD83 +no_defs +ellps=GRS80 +towgs84=0,0,0' # global crs (coordonnées)definition 
+
+limits <- shapefile(file.path(path, "limits", "Roots.shp"))
+limits <- spTransform(limits, CRSobj = crs)
+coordinates(trees) <- ~ Xutm + Yutm
+proj4string(trees) <- '+proj=utm +zone=22 +datum=WGS84 +units=m +no_defs +ellps=WGS84 +towgs84=0,0,0'
+trees <- spTransform(trees, CRSobj = crs)
+```
+
+
