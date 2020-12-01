@@ -5,6 +5,8 @@ date: "18/02/2020"
 output: html_document
 ---
 
+Sampling design, and daily sampling required in the field.
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```

@@ -25,3 +25,14 @@ data_subplot : Base de données proportion feu, exploitation, Cedrela & sols, pa
 Traits_base_complete : Base de traits fonctionnels complète (Marco + moi) et homogène, dont données brutes
 
 Traitsbase_fordiversity :  Base des traits fonctionnels, moyénnés à l'espèce, prête à l'analyse.
+
+
+
+# Scripts (.rmd) names & descriptions
+
+*All the scripts listed below are the main scripts of this repository. The others (not listed) are only obsolete fragments of these main scripts. These osolete scripts were useful to me, and I wish to keep them. But should not be useful to you.*
+
+"InternshipM2 - FieldScript": Sampling design, and daily sampling required in the field.
+
+"Stage_M2_Script_complet": Complete script of my Master thesis, for data loading, management, analysis and illustration.
+
