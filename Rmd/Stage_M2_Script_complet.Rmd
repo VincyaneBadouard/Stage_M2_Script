@@ -57,7 +57,7 @@ Repartir de la base de données originale de Marco.
 
 ```{r chargement de la base de donnees originale de Marco}
 
-Marco_raw <- read_delim("../Csv/data_FT.csv", ";", escape_double = FALSE, locale = locale(decimal_mark = ","), trim_ws = TRUE)
+Marco_raw <- read_delim("../data/data_FT.csv", ";", escape_double = FALSE, locale = locale(decimal_mark = ","), trim_ws = TRUE)
 
 #vérifier la présence des virgules
 ```
@@ -66,7 +66,7 @@ Charger la base de données post-terrain, contenant sa base complétée et la mi
 
 ```{r Charger la base de donnees post-terrain}
 
-DATABASE <- read_delim("../Csv/DATABASE.csv", ";", escape_double = FALSE, locale = locale(decimal_mark = ","), trim_ws = TRUE)
+DATABASE <- read_delim("../data/DATABASE.csv", ";", escape_double = FALSE, locale = locale(decimal_mark = ","), trim_ws = TRUE)
 
 #vérifier la présence des virgules
 ```
@@ -152,7 +152,7 @@ write.csv2(Marco_completed, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoir
 ### Feuilles
 
 ```{r leaves base preparation}
-leaves_area <- read_csv("../Csv/Summary of Leaves.csv")
+leaves_area <- read_csv("../data/Summary of Leaves.csv")
 
  #Manipulation de la table
 Tulipier <- leaves_area %>% #Cas du "tulipier du Gabon"
@@ -232,7 +232,7 @@ Mybase_leafarea <- Mybase_leafarea %>%
 ### Racines
 
 ```{r roots base preparation}
-roots_area <- read_csv("../Csv/Summary of Roots.csv")
+roots_area <- read_csv("../data/Summary of Roots.csv")
 
 Tulipierroots <- roots_area %>% 
   slice(255:263) %>% 
@@ -351,7 +351,7 @@ Ourtraitsbase <- together %>%
 Mettre à jour la taxonomie botanique
 
 ```{r Taxo bota mise a jour}
-Data_Tene <- read_delim("../Csv/data_final.csv",
+Data_Tene <- read_delim("../data/data_final.csv",
     ";", escape_double = FALSE, locale = locale(decimal_mark = ","),
     trim_ws = TRUE)
 
@@ -466,7 +466,7 @@ sp_ab_intru <- filter(Ourbase_N, N < 55) #les 7 sp de la base qui ne font pas pa
 
 ```{r Préparation de ma base de longueurs}
 
-My_lengths <- read_csv("../Csv/results_length.csv")
+My_lengths <- read_csv("../data/results_length.csv")
 
 #caluler la longueur de l'orientation si ya des a,b
 
@@ -586,7 +586,7 @@ NAabond <- Ourbase_clean[is.na(Ourbase_clean$SPAD),]
 
 ```{r données brutes manquantes Marco}
 
-rawmissingdataMarco <- read_delim("../Csv/roots computation.csv", 
+rawmissingdataMarco <- read_delim("../data/roots computation.csv", 
     "\t", escape_double = FALSE, col_types = cols(DryWeight = col_number(), 
         FreshWeight = col_number()), locale = locale(decimal_mark = ","), 
     trim_ws = TRUE)
@@ -619,7 +619,7 @@ Traitement de la BD des longueurs de racines de Marco (Taxonomie à recoder) :
 
 ```{r Roots length Marco}
 
-Marco_lengths <- read_csv("../Csv/Marco_lengths.csv", 
+Marco_lengths <- read_csv("../data/Marco_lengths.csv", 
     locale = locale(encoding = "latin1")) %>% 
   select(image, length)
 
@@ -732,7 +732,7 @@ Traitement de la BD des surfaces de racines de Marco (Taxonomie à recoder) :
 
 ```{r Roots area Marco}
 
-roots_area_Marco <- read_csv("../Csv/Summary areas of Roots scans Marco.csv", locale = locale(encoding = "latin1")) %>% 
+roots_area_Marco <- read_csv("../data/Summary areas of Roots scans Marco.csv", locale = locale(encoding = "latin1")) %>% 
   select(Slice, "Total Area")
 
 #D'abord dissocier les codes des arbres de Téné (commence par une lettre) & de l'Inp (commence par un chiffre)
@@ -859,7 +859,7 @@ NAtable <- Ourbase_MarcoRoots[is.na(Ourbase_MarcoRoots$RSA),]
 Enregistrer la base de traits finale 
 
 ```{r base de traits finale}
-write.csv2(Ourbase_MarcoRoots, "../Csv/Traits_base_complete.csv")
+write.csv2(Ourbase_MarcoRoots, "../data/Traits_base_complete.csv")
 
 ```
 
@@ -980,7 +980,7 @@ Traitsbase_means <- Traitsbase_completed %>%
   distinct()
 #13 traits, 48 species
 
-write.csv2(Traitsbase_means, "../Csv/Traitsbase_fordiversity.csv")
+write.csv2(Traitsbase_means, "../data/Traitsbase_fordiversity.csv")
 
 ```
 
@@ -1341,7 +1341,7 @@ Each type is calculated for each plot.
 
 ## Covariants data base
 ```{r Covariants data base}
-data_subplot <- read_delim("../Csv/data_subplot.csv", 
+data_subplot <- read_delim("../data/data_subplot.csv", 
     ";", escape_double = FALSE, locale = locale(decimal_mark = ","), 
     trim_ws = TRUE)
 
@@ -1595,7 +1595,7 @@ covariantsdata_classes <- covariantsdata_plus1 %>%
   mutate(Cedrela_classes = gtools::quantcut(prop_ced, 3)) %>% 
   mutate(Fire_classes = gtools::quantcut(prop_fire, 3)) 
 
-write.csv2(covariantsdata_classes, "../Csv/covariantsdata_classes.csv")
+write.csv2(covariantsdata_classes, "../data/covariantsdata_classes.csv")
 
 covariantsdata_classesLongformat <- covariantsdata_classes %>% 
   select(plot, Sylviculture, Cedrela_classes, Fire_classes) %>% 
