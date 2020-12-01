@@ -66,7 +66,7 @@ Charger la base de données post-terrain, contenant sa base complétée et la mi
 
 ```{r Charger la base de donnees post-terrain}
 
- DATABASE <- read_delim("../Csv/DATABASE.csv", ";", escape_double = FALSE, locale = locale(decimal_mark = ","), trim_ws = TRUE)
+DATABASE <- read_delim("../Csv/DATABASE.csv", ";", escape_double = FALSE, locale = locale(decimal_mark = ","), trim_ws = TRUE)
 
 #vérifier la présence des virgules
 ```
@@ -125,7 +125,7 @@ Marco_completed$Filled[170] <-Marco_completed$Filled[170] <- 1
 
 ```
 
-Transformer les Leafarea de Marco de cm2 à mm2, ainsi que SLA
+Transformer les Leafarea de Marco de cm2 à mm2, ainsi que SLA.
 
 ```{r Leafarea & SLA de Marco de cm2 à mm2}
 
@@ -302,13 +302,22 @@ Mybase_areas$LeafArea <- format(Mybase_areas$LeafArea, digits = 0, scientific = 
 
 ```
 
+
+## Corriger l'unité de mes LeafThickness
+de cm à mm
+```{r LeafThickness unit correction}
+Mybase_CorrecLeafThick <- Mybase_areas %>%
+  mutate(LeafThickness = LeafThickness*10)
+```
+
+
 ## Calculer LDMC & SLA 
 ```{r LDMC, SLA compute}
 
-Mybase_areas$LeafArea <- as.numeric(Mybase_areas$LeafArea)
-Mybase_areas$RootsArea <- as.numeric(Mybase_areas$RootsArea)
+Mybase_CorrecLeafThick$LeafArea <- as.numeric(Mybase_CorrecLeafThick$LeafArea)
+Mybase_CorrecLeafThick$RootsArea <- as.numeric(Mybase_CorrecLeafThick$RootsArea)
 
-Mybase_computes <- Mybase_areas %>%
+Mybase_computes <- Mybase_CorrecLeafThick %>%
   mutate(LDMC = DryWeight/FreshWeight) %>% #sec en mg, frais en g
   mutate(SLA = LeafArea/DryWeight) %>% 
   mutate(RSA = RootsArea/Rootdryweight) %>% 
@@ -317,6 +326,7 @@ Mybase_computes <- Mybase_areas %>%
 write.csv2(Mybase_computes, "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/TERRAIN/Mybase_computes.csv")
   
 ```
+
 
 # Mettre à jour la taxonomie botanique
 
