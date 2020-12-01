@@ -5,6 +5,8 @@ date: "05/06/2020"
 output: html_document
 ---
 
+Script required due to an error caused by working on attached but not homogeneous databases. *File obsolete today.*
+
 ```{r Packages}
 library(tidyverse) 
 library(diffdf) #comparaison de basee de données

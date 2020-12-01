@@ -8,6 +8,8 @@ output:
     toc_float: yes
 ---
 
+Complete script of my Master thesis, for data loading, management, analysis and illustration.
+
 ```{r ChunkOptions}
 knitr::opts_chunk$set(echo = T, message = F, warning = F, cache = T)
 ```
