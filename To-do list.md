@@ -13,3 +13,4 @@
 + enregistrer mes nouvelles figures
 + Réactualiser les figures dans mon rapport
 + Enlever mes descritions/interprétations obsolètes des résultats
+
