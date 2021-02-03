@@ -525,7 +525,7 @@ summary_mylenths$OldVernacular <- trimws(summary_mylenths$OldVernacular,"r")
 #joindre à la base :
 Ourbase_mylengths <- Ourbase_N %>% 
   left_join(summary_mylenths, by = c("OldVernacular", "TreeID", "SampleID")) %>% 
-  mutate(RSL = ifelse(is.na(RSL), Roots_length/Rootdryweight, RSL)) 
+  mutate(RSL = ifelse(is.na(RSL), Roots_length/Rootdryweight, RSL)) #add my RSL only
 
 Ourbase_mylengths$RSL <- round(Ourbase_mylengths$RSL, digits = 3) #3 decimales pour RSL
 
@@ -615,7 +615,7 @@ NAtable <- rootsmassMarco[is.na(rootsmassMarco$Rootdryweight),]
 
 ## Longueurs de racines de Marco
 
-Traitement de la BD des longueurs de racines de Marco (Taxonomie à recoder) :
+Traitement de la BD des longueurs de racines de Marco (ses codes sp à recoder) :
 
 ```{r Roots length Marco}
 
@@ -728,13 +728,15 @@ NAtable <- Ourbase_Marcolength[is.na(Ourbase_Marcolength$length),]
 
 ## Surfaces de racine de Marco
 
-Traitement de la BD des surfaces de racines de Marco (Taxonomie à recoder) :
+Traitement de la BD des surfaces de racines de Marco (ses codes sp à recoder) :
 
 ```{r Roots area Marco}
 
+#Importation des surfaces calcuées par ImageJ
 roots_area_Marco <- read_csv("../data/Summary areas of Roots scans Marco.csv", locale = locale(encoding = "latin1")) %>% 
   select(Slice, "Total Area")
 
+#Ses codes sp à recoder 
 #D'abord dissocier les codes des arbres de Téné (commence par une lettre) & de l'Inp (commence par un chiffre)
 
 INPsamplarea <- roots_area_Marco %>% 
@@ -752,7 +754,7 @@ TENEsamplarea <- roots_area_Marco %>%
 
 
 
-#Maintenant on va traiter chaque code séparément :
+#Maintenant on va traiter chaqu'un des 2 types de code séparément :
 #Code de Téné:
 TENEsamplrecodearea <- TENEsamplarea %>%
   separate(Slice, sep = "-",
@@ -795,7 +797,7 @@ INPsamplrecodearea <-INPsamplrecodearea %>%
   mutate(TreeID = StrLeft(INPsamplrecodearea$ID,-1)) %>% 
   mutate(sp = tolower(sp))
 
-INPsamplrecodearea$sp <- trimws(INPsamplrecodearea$sp, "both") #enlever l'espace de part&d'autre 
+INPsamplrecodearea$sp <- trimws(INPsamplrecodearea$sp, "both") #enlever l'espace de part & d'autre 
 
 INPsamplrecodearea1 <-INPsamplrecodearea %>% 
 mutate(sp = recode(sp, "'formager' = 'fromager'")) %>% #pas oublier les guillemets autour
@@ -839,12 +841,12 @@ NAtable <- Ourbase_MarcoArea[is.na(Ourbase_MarcoArea$length),]
 # Mettre longueurs et surfaces de Marco dans les colones dédiées :
 
 Ourbase_MarcoRoots <- Ourbase_MarcoArea %>% 
-  mutate(Roots_length = ifelse(is.na(Roots_length), length, Roots_length)) %>%
-  mutate(RootsArea = ifelse(is.na(RootsArea), `Total Area`, RootsArea)) %>% 
-  mutate(RSL = Roots_length/Rootdryweight) %>%
-  mutate(RSA = ifelse(is.na(RSA), RootsArea/Rootdryweight, RSA)) %>% 
-  mutate(RDMC = Rootdryweight/Rootfreshweight) %>%
-  mutate(SLA = LeafArea/DryWeight) %>% 
+  mutate(Roots_length = ifelse(is.na(Roots_length), length, Roots_length)) %>% #Add Marco's roots lengths only
+  mutate(RootsArea = ifelse(is.na(RootsArea), `Total Area`, RootsArea)) %>% #Add Marco's roots areas only
+  mutate(RSL = Roots_length/Rootdryweight) %>% #Compute RSL for my & Marco's data
+  mutate(RSA = ifelse(is.na(RSA), RootsArea/Rootdryweight, RSA)) %>% #Compute RSA for Marco's data
+  mutate(RDMC = Rootdryweight/Rootfreshweight) %>% #Compute RDMC for my & Marco's data
+  mutate(SLA = LeafArea/DryWeight) %>% #Compute SLA for my & Marco's data
   select(-length, -`Total Area`)
 Ourbase_MarcoRoots <-Ourbase_MarcoRoots %>% 
   mutate(LDMC = round(LDMC, digits = 2))
