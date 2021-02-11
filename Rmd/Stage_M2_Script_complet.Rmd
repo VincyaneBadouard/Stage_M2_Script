@@ -1,7 +1,6 @@
 ---
 title: "Stage_M2_Script_complet"
 author: "Vincyane Badouard"
-date: "16/07/2020"
 output: 
   html_document:
     toc: true
@@ -964,7 +963,7 @@ methods(mice)
 # MICEinf <- mice(Traitsbase, maxit=100) #to use 100 iterations for each imputed dataset
 # MICEinf$imp$SPAD
 # MICEinf$imp$Deciduousness
-# Traitsbase_completed <- complete(MICEinf,5) #put these inferred values in our dataset. We take the fifth estimation because homogeneous in its results..
+# Traitsbase_completed <- complete(MICEinf,4) #put these inferred values in our dataset. We take the fifth estimation because homogeneous in its results..
 # 
 # write.csv2(Traitsbase_completed, "../data/Traitsbase_afterMICE.csv")
 
