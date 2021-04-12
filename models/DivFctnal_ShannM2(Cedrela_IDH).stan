@@ -17,8 +17,6 @@ data {
   vector [N] Fire; // feu
   vector [N] Ced; // Cedrela (espèce invasive)
   vector [N] Soil; // Proportion de sol hydromorphique 
-  int<lower=1> N_pred; // Predicted values number
-  vector [N_pred] Ced_pred; 
 }
 
 // The parameters accepted by the model. Our model
@@ -41,8 +39,5 @@ model {
   DivFctnal_Shann ~ lognormal(log(theta0 + theta1*Sylv + theta2*Fire + theta3a*Ced + theta3b*Ced .* Ced + theta4*Soil), sigma); // Likelihood
 }
 
-// Response predicted values
-generated quantities {
-  vector  [N_pred] Pred_DivFctnal_CedIDH = theta0 + theta3a*Ced_pred + theta3b*Ced_pred .* Ced_pred; // Median (=exp(mu). Other covariants are taken at the average : 0 (standardized)
-}
+
 

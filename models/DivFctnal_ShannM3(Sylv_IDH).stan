@@ -17,7 +17,6 @@ data {
   vector [N] Fire; // feu
   vector [N] Ced; // Cedrela (espèce invasive)
   vector [N] Soil; // Proportion de sol hydromorphique 
-
 }
 
 // The parameters accepted by the model. Our model

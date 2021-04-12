@@ -1371,9 +1371,10 @@ covariantsdata <- data_subplot %>%
   left_join(Diversitytable_phyloshan, by = "plot") %>%   # Phylogenetic diversity values
   left_join(Diversitytable_fctnalshan, by = "plot")   # Functional diversity values
 
+#To standardize variables to put them at the same scale and to keep theta0 as mean of the response variable :
 standardcovariantsdata <- covariantsdata %>% 
   mutate_at(c("prop_ced", "prop_hydrosoil", "prop_fire", "prop_ba_removed"),
-            funs(as.vector(scale(.)))) #To standardize variables to put them at the same scale and to keep theta0 as mean of the response variable.
+            funs(as.vector(scale(.)))) 
  
 ```
 
@@ -1667,9 +1668,9 @@ There are potencial interactions between Cedrela and soils/fire/sylviculture
 
 # Stan time 
 
-## Data
+## Data preparation
 ```{r}
-N = dim(standardcovariantsdata) [1] #rows (observations) number
+N = dim(standardcovariantsdata) [1] #rows (observations (plots)) number
 
 # Response values
 DivTaxo_Shann = standardcovariantsdata$DivTaxo_Shann
@@ -1680,24 +1681,26 @@ DivFctnal_Shann = standardcovariantsdata$DivFctnal_Shann
 Silv = standardcovariantsdata$prop_ba_removed
 Fire = standardcovariantsdata$prop_fire
 Ced = standardcovariantsdata$prop_ced
-Soil = standardcovariantsdata$prop_hydrosoil
+Soil = standardcovariantsdata$prop_hydrosoil #we take only the hydromorphic soil
 
-Interac = covariantsdata$prop_ba_removed * covariantsdata$prop_fire # fire & sylv multiplication no standardised
-Interac_std = (as.vector(scale(Interac))) # fire & sylv standardised multiplication
+## Interaction effect
+Interac = covariantsdata$prop_ba_removed * covariantsdata$prop_fire # fire & sylv multiplication no standardized
+Interac_std = (as.vector(scale(Interac))) # fire & sylv standardized multiplication
            
 # Predictions 
 N_pred = 100 # values number that we want to predict
 
-## Create 100 no standardized values of each predictor
+## Create 100 no-standardized values of each predictor
+# with max & min of initial no-standardized variables   
 Silv_seq <- seq(min(covariantsdata$prop_ba_removed),max(covariantsdata$prop_ba_removed), length.out = N_pred)
 Fire_seq <- seq(min(covariantsdata$prop_fire),max(covariantsdata$prop_fire), length.out = N_pred)
 Ced_seq <- seq(min(covariantsdata$prop_ced),max(covariantsdata$prop_ced), length.out = N_pred)
 Soil_seq <- seq(min(covariantsdata$prop_hydrosoil),max(covariantsdata$prop_hydrosoil), length.out = N_pred)
 Interac_seq <- seq(min(Interac),max(Interac), length.out = N_pred)
 
-# Sampled standardized predictors
-# de max et min des variables non standardizées  
-Silv_pred = (Silv_seq - mean(covariantsdata$prop_ba_removed))/sd(covariantsdata$prop_ba_removed) # standardized with INITIAL var mean and scale to not change relation with theta
+# To standardize the sampled predictors :
+# standardized with INITIAL variable's mean and scale to not change relation with the theta model's parameter.
+Silv_pred = (Silv_seq - mean(covariantsdata$prop_ba_removed))/sd(covariantsdata$prop_ba_removed) 
 Fire_pred = (Fire_seq - mean(covariantsdata$prop_fire))/sd(covariantsdata$prop_fire)
 Ced_pred = (Ced_seq - mean(covariantsdata$prop_ced))/sd(covariantsdata$prop_ced)
 Soil_pred = (Soil_seq - mean(covariantsdata$prop_hydrosoil))/sd(covariantsdata$prop_hydrosoil)
@@ -1705,26 +1708,31 @@ Interac_pred = (Interac_seq - mean(Interac))/sd(Interac)
 
 ```
 
-## Models compilation
+## Data for stan models
 ```{r, results = 'hide'}
-# Taxo
-## Data
-data_Taxo <- list( # Data only for IDH models (without prediction)
-  N = N, 
-  DivTaxo_Shann = DivTaxo_Shann,
+# Taxonomic diversity
+# Data only for IDH models (without prediction)
+data_Taxo <- list( 
+  N = N, # Observations number (plots number)
+  DivTaxo_Shann = DivTaxo_Shann, # Response variable
+  #Effects variables (standardized):
   Sylv = Silv,
   Fire = Fire,
   Ced = Ced,
-  Soil = Soil #we take only the hydromorphic soil
+  Soil = Soil 
   )
-data_Taxo_interac <- list( # Data including prediction
-  N = N, #rows number
-  DivTaxo_Shann = DivTaxo_Shann,
+
+# Data including prediction
+data_Taxo_interac <- list( 
+  N = N, # Observations number (plots number)
+  DivTaxo_Shann = DivTaxo_Shann,  # Response variable
+  #Effects variables (standardized):
   Sylv = Silv,
   Fire = Fire,
   Ced = Ced,
-  Soil = Soil, #we take only the hydromorphic soil
+  Soil = Soil, 
   Interac = Interac_std, # fire & sylv standardised multiplication
+  # For prediction:
   N_pred = N_pred,
   Sylv_pred = Silv_pred,
   Fire_pred = Fire_pred, 
@@ -1732,32 +1740,28 @@ data_Taxo_interac <- list( # Data including prediction
   Soil_pred = Soil_pred,
   Interac_pred = Interac_pred
   )
-## Models
-### IDH models:
-DivTaxo_ShannM2_IDH_Ced <- rstan::stan("../models/DivTaxo_ShannM2(Cedrela_IDH).stan", data = data_Taxo, iter = 2000) 
-DivTaxo_ShannM3_IDH_Sylv <- stan("../models/DivTaxo_ShannM3(Sylv_IDH).stan", data = data_Taxo, iter = 2000) 
-DivTaxo_ShannM4_IDH_Fire <- stan("../models/DivTaxo_ShannM4(Fire_IDH).stan", data = data_Taxo, iter = 2000) 
-### Complete model presented in my report:
-DivTaxo_ShannM5_interac_fire_sylv <- stan("../models/DivTaxo_ShannM5(interac_fire-sylv).stan", data = data_Taxo_interac, iter = 2000) 
 
-# Phylo
-## Data
-data_Phylo <- list(
-  N = N, 
-  DivPhylo_Shann = DivPhylo_Shann,
+# Phylogenetic diversity
+# Data only for IDH models (without prediction)
+data_Phylo <- list( 
+  N = N, # Observations number (plots number)
+  DivPhylo_Shann = DivPhylo_Shann,  # Response variable
+  #Effects variables (standardized):
   Sylv = Silv,
   Fire = Fire,
   Ced = Ced,
   Soil = Soil)
 
 data_Phylo_interac <- list(
-  N = N, 
-  DivPhylo_Shann = DivPhylo_Shann,
+  N = N, # Observations number (plots number)
+  DivPhylo_Shann = DivPhylo_Shann,  # Response variable
+ #Effects variables (standardized):
   Sylv = Silv,
   Fire = Fire,
   Ced = Ced,
-  Soil = Soil, #we take only the hydromorphic soil
+  Soil = Soil, 
   Interac = Interac_std, # fire & sylv standardised multiplication
+ # For prediction:
   N_pred = N_pred,
   Sylv_pred = Silv_pred,
   Fire_pred = Fire_pred, 
@@ -1765,30 +1769,27 @@ data_Phylo_interac <- list(
   Soil_pred = Soil_pred,
   Interac_pred = Interac_pred
   )
-## Models
-DivPhylo_ShannM2_IDH_Ced <- stan("../models/DivPhylo_ShannM2(Cedrela_IDH).stan", data = data_Phylo, iter = 2000) 
-DivPhylo_ShannM3_IDH_Sylv <- stan("../models/DivPhylo_ShannM3(Sylv_IDH).stan", data = data_Phylo, iter = 2000) 
-DivPhylo_ShannM4_IDH_Fire <- stan("../models/DivPhylo_ShannM4(Fire_IDH).stan", data = data_Phylo, iter = 2000) 
-DivPhylo_ShannM5_interac_fire_sylv <- stan("../models/DivPhylo_ShannM5(interac_fire-sylv).stan", data = data_Phylo_interac, iter = 2000) 
 
-# Fctnal
-## Data
-data_Fctnal <- list(
-  N = N, 
-  DivFctnal_Shann = DivFctnal_Shann,
+# Fctnal diversity
+data_Fctnal <- list( # Data only for IDH models (without prediction)
+  N = N,# Observations number (plots number)
+  DivFctnal_Shann = DivFctnal_Shann,  # Response variable
+  #Effects variables (standardized):
   Sylv = Silv,
   Fire = Fire,
   Ced = Ced,
   Soil = Soil)
 
 data_Fctnal_interac <- list(
-  N = N, 
-  DivFctnal_Shann = DivFctnal_Shann,
+  N = N, # Observations number (plots number)
+  DivFctnal_Shann = DivFctnal_Shann,  # Response variable
+  #Effects variables (standardized):
   Sylv = Silv,
   Fire = Fire,
   Ced = Ced,
-  Soil = Soil, #we take only the hydromorphic soil
+  Soil = Soil, 
   Interac = Interac_std, # fire & sylv standardised multiplication
+  # For prediction:
   N_pred = N_pred,
   Sylv_pred = Silv_pred,
   Fire_pred = Fire_pred, 
@@ -1798,23 +1799,52 @@ data_Fctnal_interac <- list(
   )
 
 data_Fctnal_CedIDH <- list(
-  N = N, 
-  DivFctnal_Shann = DivFctnal_Shann,
+  N = N, # Observations number (plots number)
+  DivFctnal_Shann = DivFctnal_Shann,  # Response variable
+  #Effects variables (standardized):
   Sylv = Silv,
   Fire = Fire,
   Ced = Ced,
   Soil = Soil,
+  # For prediction:
   N_pred = N_pred,
   Ced_pred = Ced_pred)
+```
+
+## Models compilation
+### Taxonomic diversity models
+```{r}
+# IDH models
+DivTaxo_ShannM2_IDH_Ced <- rstan::stan("../models/DivTaxo_ShannM2(Cedrela_IDH).stan", data = data_Taxo, iter = 2000) 
+DivTaxo_ShannM3_IDH_Sylv <- stan("../models/DivTaxo_ShannM3(Sylv_IDH).stan", data = data_Taxo, iter = 2000) 
+DivTaxo_ShannM4_IDH_Fire <- stan("../models/DivTaxo_ShannM4(Fire_IDH).stan", data = data_Taxo, iter = 2000) 
+# complete model
+DivTaxo_ShannM5_interac_fire_sylv <- stan("../models/DivTaxo_ShannM5(interac_fire-sylv).stan", data = data_Taxo_interac, iter = 2000) 
+```
 
 
-## Models
+### Phylogenetic diversity models
+```{r}
+# IDH models
+DivPhylo_ShannM2_IDH_Ced <- stan("../models/DivPhylo_ShannM2(Cedrela_IDH).stan", data = data_Phylo, iter = 2000) 
+DivPhylo_ShannM3_IDH_Sylv <- stan("../models/DivPhylo_ShannM3(Sylv_IDH).stan", data = data_Phylo, iter = 2000) 
+DivPhylo_ShannM4_IDH_Fire <- stan("../models/DivPhylo_ShannM4(Fire_IDH).stan", data = data_Phylo, iter = 2000) 
+# complete model
+DivPhylo_ShannM5_interac_fire_sylv <- stan("../models/DivPhylo_ShannM5(interac_fire-sylv).stan", data = data_Phylo_interac, iter = 2000) 
+
+```
+
+
+### Functional diversity models
+```{r}
+# IDH models
 DivFctnal_ShannM2_IDH_Ced <- stan("../models/DivFctnal_ShannM2(Cedrela_IDH).stan", data = data_Fctnal, iter = 2000) 
 DivFctnal_ShannM3_IDH_Sylv <- stan("../models/DivFctnal_ShannM3(Sylv_IDH).stan", data = data_Fctnal, iter = 2000) 
 DivFctnal_ShannM4_IDH_Fire <- stan("../models/DivFctnal_ShannM4(Fire_IDH).stan", data = data_Fctnal, iter = 2000) 
+# complete model
 DivFctnal_ShannM5_interac_fire_sylv <- stan("../models/DivFctnal_ShannM5(interac_fire-sylv).stan", data = data_Fctnal_interac, iter = 2000) 
-
 ```
+
 
 
 ## Stan for taxonomic diversity of Shannon
@@ -1823,12 +1853,12 @@ DivFctnal_ShannM5_interac_fire_sylv <- stan("../models/DivFctnal_ShannM5(interac
 _DivTaxo_Shann ~ lognormal(mu, sigma)_ LogNormal
 
 ```{r DivTaxo_ShannM0 : data list & compilation}
-
+#data
 data <- list(
   N = dim(Diversitytable_taxshan) [1], 
   DivTaxo_Shann = Diversitytable_taxshan$DivTaxo_Shann
   )
-
+#Model running
 DivTaxo_ShannM0modif <- stan("../models/DivTaxo_ShannM0modif.stan", data = data, iter = 2000) #compilation
 DivTaxo_ShannM0modif
 
@@ -1854,17 +1884,18 @@ mcmc_areas(as.array(DivTaxo_ShannM0modif), prob=0.95, pars = "theta0") # pars di
 
 ### Intermediate Disturbance Hypothesis (IDH)
 #### Cedrela 
+Model running: 
 ```{r, results = 'hide'}
 DivTaxo_ShannM2_IDH_Ced
 
 # Parameters :
-# theta1 = sylviculture 
+# theta1 = silviculture 
 # theta2 = fire 
 # theta3a = Cedrela parameter croissant part of intermediate HP 
 # theta3b = Cedrela parameter descending part 
 # theta4 = soil
 ```
-
+Model illustrations:
 ```{r}
 #Chains
 mcmc_trace(as.array(DivTaxo_ShannM2_IDH_Ced), #as.array = comme vecteur
@@ -1875,12 +1906,16 @@ mcmc_pairs(as.array(DivTaxo_ShannM2_IDH_Ced, pars =  c("theta0","theta1","theta2
 
 #Boxplot
 mcmc_intervals(DivTaxo_ShannM2_IDH_Ced, pars = c("theta0","theta1","theta2","theta3a", "theta3b","theta4"))
-plot(DivTaxo_ShannM2_IDH_Ced)
+plot(DivTaxo_ShannM2_IDH_Ced, pars = c("theta0","theta1","theta2","theta3a", "theta3b","theta4"))
 
 ```
 Cedrela is not an "intermediate disturbance" : theta3a is negativ.
+Silv : no effect
+Fire : positiv effect
+Soil : positiv effect
 
 #### Sylviculture 
+Model running: 
 ```{r, results = 'hide'}
 DivTaxo_ShannM3_IDH_Sylv
 
@@ -1891,7 +1926,7 @@ DivTaxo_ShannM3_IDH_Sylv
 # theta3 = Cedrela parameter
 # theta4 = soil
 ```
-
+Model illustrations:
 ```{r}
 #Chains
 mcmc_trace(as.array(DivTaxo_ShannM3_IDH_Sylv), #as.array = comme vecteur
@@ -1902,14 +1937,17 @@ mcmc_pairs(as.array(DivTaxo_ShannM3_IDH_Sylv, pars = c("theta0","theta1a","theta
 
 #Boxplot
 mcmc_intervals(DivTaxo_ShannM3_IDH_Sylv, pars = c("theta0","theta1a","theta1b","theta2","theta3", "theta4")) 
+plot(DivTaxo_ShannM3_IDH_Sylv, pars = c("theta0","theta1a","theta1b","theta2","theta3", "theta4"))
 
 ```
 Taxonomic diversity *decreases at low BA-removed proportion and increases at higher* BA-removed proportion
 It is not "intermediate disturbance" 
-
-Positiv soil effect 
+Cedrela : negativ effect
+Fire : positiv effect
+Soil : positiv effect
 
 #### Fire 
+Model running: 
 ```{r, results = 'hide'}
 DivTaxo_ShannM4_IDH_Fire
 
@@ -1920,7 +1958,7 @@ DivTaxo_ShannM4_IDH_Fire
 # theta3 = Cedrela parameter
 # theta4 = soil
 ```
-
+Model illustrations:
 ```{r}
 #Chains
 mcmc_trace(as.array(DivTaxo_ShannM4_IDH_Fire), #as.array = comme vecteur
@@ -1931,12 +1969,17 @@ mcmc_pairs(as.array(DivTaxo_ShannM4_IDH_Fire, pars = c("theta0","theta1","theta2
 
 #Boxplot
 mcmc_intervals(DivTaxo_ShannM4_IDH_Fire, pars = c("theta0","theta1","theta2a","theta2b","theta3", "theta4"))
+plot(DivTaxo_ShannM4_IDH_Fire, pars = c("theta0","theta1","theta2a","theta2b","theta3", "theta4"))
 
 ```
 Fire is not an "intermediate disturbance" : theta2b is positiv.
+Silv : negativ effect
+Cedrela : negativ effect
+Soil : positiv effect
 
-### Interaction Sylviculture * fire
+### Complete model
 
+Model running: 
 ```{r, results = 'hide'}
 DivTaxo_ShannM5_interac_fire_sylv
 # Parameters :
@@ -1947,7 +1990,7 @@ DivTaxo_ShannM5_interac_fire_sylv
 # theta5 = Fire:Sylv interaction
 ```
 
-
+Model illustrations:
 ```{r}
 #Chains
 mcmc_trace(as.array(DivTaxo_ShannM5_interac_fire_sylv, pars = paste0("theta", 0:5))) #as.array = comme vecteur
@@ -1957,26 +2000,30 @@ mcmc_pairs(as.array(DivTaxo_ShannM5_interac_fire_sylv, pars = paste0("theta", 0:
 
 #Boxplot
 mcmc_intervals(DivTaxo_ShannM5_interac_fire_sylv, pars = paste0("theta", 0:5), prob = 0.95) #display thetas (1to5) distribution
-
-plot(DivTaxo_ShannM5_interac_fire_sylv)
-mcmc_intervals(DivTaxo_ShannM5_interac_fire_sylv, regex_pars = "theta3", prob_outer = 0.9)
+plot(DivTaxo_ShannM5_interac_fire_sylv, pars = paste0("theta", 0:5))
+mcmc_intervals(DivTaxo_ShannM5_interac_fire_sylv, regex_pars = "theta3", prob_outer = 0.9) #only Cedrela's effect
 ```
 
 #### Predictions with Stan
 
 ```{r}
 # Outputs model extraction
+#create a table with the model's "generated quantities" (diversity prediction according to logging/fire/Cedrela,hydrosoil proportions), 
 Pred_DivTaxo <- as.data.frame(DivTaxo_ShannM5_interac_fire_sylv, pars = c("Pred_DivTaxo_Sylv", "Pred_DivTaxo_Fire", "Pred_DivTaxo_Ced", "Pred_DivTaxo_Soil", "Pred_DivTaxo_sylvXfire")) %>% 
      reshape2::melt() %>% #100 predictions are in several col -> put them in only one
      as.tbl() %>% 
-     group_by(variable) %>% 
+     group_by(variable) %>% #group by predictor
+  #Le modèle predictif a généré, pour chacune des valeurs des variables effet générées, une distribution de valeurs (4000) de la variable réponse correspondant à celle décrite par le modèle explicatif, lorsque la variable effet concernée agit.
+  
+  #compute mean and quantiles of these distributions:
      summarise("mean" = mean(value), "Lower_bound_2.5" = quantile(value, 0.025), "Upper_bound_97.5" = quantile(value, 0.975)) %>% 
   mutate(variable = as.character(as.factor(variable))) %>%
-  mutate(N_pred = as.character(extract_numeric(variable)))  # create a colomn with N_pred number
+  mutate(N_pred = as.character(extract_numeric(variable)))  # create a colomn with N_pred number (=100 by predictor)
 
-Pred_DivTaxo$variable <- str_replace_all(Pred_DivTaxo$variable, "[[:punct:]]", " ")#remove punctuation chr
+# Clean the table, to rename the variables
+Pred_DivTaxo$variable <- str_replace_all(Pred_DivTaxo$variable, "[[:punct:]]", " ")#remove punctuation ([]) chr
 Pred_DivTaxo$variable <- str_replace_all(Pred_DivTaxo$variable, "\\d", "") #remove digits
-Pred_DivTaxo$variable <- trimws(Pred_DivTaxo$variable,"r")
+Pred_DivTaxo$variable <- trimws(Pred_DivTaxo$variable,"r") #remove right spaces
 Pred_DivTaxo$variable <- str_replace_all(Pred_DivTaxo$variable, "\\s", "_") #replace space by _
 
 Pred_DivTaxo <- Pred_DivTaxo %>% 
@@ -1988,76 +2035,89 @@ mutate(covar_pred = ifelse(Div_pred == "Pred_DivTaxo_Soil", "Soil_pred", covar_p
 mutate(covar_pred = ifelse(Div_pred == "Pred_DivTaxo_sylvXfire", "silvXfire_pred", covar_pred))  
 
 
-# Sampled covariants table:
-
+# Simulated effect variables table:
 Covariants_pred <- data.frame(
-Silv_pred = Silv_pred,
-Fire_pred = Fire_pred, 
-Ced_pred = Ced_pred, 
-Soil_pred = Soil_pred,
-Silv_pred1 = Silv_seq,
-Fire_pred1 = Fire_seq,
-Ced_pred1 = Ced_seq,
-Soil_pred1 =  Soil_seq
-) %>% 
-  mutate(silvXfire_pred = Interac_pred) %>%
+  # standardized simulated values of each effect variable:
+  Silv_pred = Silv_pred,
+  Fire_pred = Fire_pred, 
+  Ced_pred = Ced_pred, 
+  Soil_pred = Soil_pred,
+  # simulated values (no-standardized) of each effect variable:
+  Silv_pred1 = Silv_seq, #this name to be easily modifiable 
+  Fire_pred1 = Fire_seq,
+  Ced_pred1 = Ced_seq,
+  Soil_pred1 =  Soil_seq) %>% 
+  mutate(silvXfire_pred = Interac_pred) %>% #just to rename
   mutate(silvXfire_pred1 = Interac_seq) %>%
-  rownames_to_column(var= "N_pred")
+  rownames_to_column(var= "N_pred") # rows's numero became prediction's numero
 
+# Standardized simulated effect variables table:
 Standpred <- Covariants_pred %>% 
-  select(N_pred, Silv_pred, Fire_pred, Ced_pred, Soil_pred, silvXfire_pred) %>% 
-  reshape2:: melt(id.vars = 'N_pred',
-                 variable.name = "covar_pred",
-                 value.name = "Stand_val") 
-  
+  select(N_pred, Silv_pred, Fire_pred, Ced_pred, Soil_pred, silvXfire_pred) %>% # values of the "covar_pred" column
+  #columns:
+  reshape2:: melt(id.vars = 'N_pred', #(=100 for each variables)
+                 variable.name = "covar_pred", #column with all the effect variables
+                 value.name = "Stand_val") #their standardized values
+
+# No-standardized simulated effect variables table:
 Nostandpred <- Covariants_pred %>% 
-  select(N_pred, Silv_pred1, Fire_pred1, Ced_pred1, Soil_pred1, silvXfire_pred1) %>% 
+  select(N_pred, Silv_pred1, Fire_pred1, Ced_pred1, Soil_pred1, silvXfire_pred1) %>% # values of the "covar_pred" column
   reshape2:: melt(id.vars = 'N_pred',
                  variable.name = "covar_pred",
-                 value.name = "covar_val") %>% 
-  mutate(covar_pred = recode(covar_pred, "'Silv_pred1' = 'Silv_pred'; 'Fire_pred1' = 'Fire_pred'; 'Ced_pred1' = 'Ced_pred'; 'Soil_pred1' = 'Soil_pred'; 'silvXfire_pred1' = 'silvXfire_pred'")) 
-  
+                 value.name = "covar_val") %>% #their no-standardized values
+  mutate(covar_pred = recode(covar_pred, "'Silv_pred1' = 'Silv_pred'; 'Fire_pred1' = 'Fire_pred'; 'Ced_pred1' = 'Ced_pred'; 'Soil_pred1' = 'Soil_pred'; 'silvXfire_pred1' = 'silvXfire_pred'")) #rename to be homogeneous
+
+#Join standardized & no-standardized values:
 Covariants_pred <- Standpred %>% 
   left_join(Nostandpred, by = c('N_pred', 'covar_pred'))
 
+#Join model's outputs table to simulated (stand & no-stand) values table:
 Pred_covariantsdata_Taxo <- Pred_DivTaxo %>% 
   left_join(Covariants_pred, by = c("N_pred", "covar_pred"))
   
+```
 
+Prediction plots
+```{r}
+covariantsdata_plusinterac <-  covariantsdata %>% 
+  mutate(prop_silvXfire = prop_ba_removed * prop_fire) # fire & sylv multiplication no standardized
+# Wide-format to long-format -> facet_wrap/grid
+covariantsdataLongformat_plusinterac <- melt(covariantsdata_plusinterac)
 
-# Pretiction plots
+```
 
-Observed_values <- covariantsdataLongformat %>%
+```{r}
+
+Observed_values <- covariantsdataLongformat_plusinterac %>% # the real factor values
   dcast(plot ~ variable) %>% 
   melt(id.vars = c("plot",
-                   "DivTaxo_Shann", "DivPhylo_Shann", "DivFctnal_Shann"),
+                   "DivTaxo_Shann", "DivPhylo_Shann", "DivFctnal_Shann"), # the real diversity values in columns
                  variable.name = "covar_pred",
                  value.name = "covar_val") %>% 
-  mutate(covar_pred = recode(covar_pred, "'prop_ba_removed' = 'Silv_pred'; 'prop_fire' = 'Fire_pred'; 'prop_ced' = 'Ced_pred'; 'silvXfire_pred' = 'silvXfire_pred'")) 
+  mutate(covar_pred = recode(covar_pred, "'prop_ba_removed' = 'Silv_pred'; 'prop_fire' = 'Fire_pred'; 'prop_ced' = 'Ced_pred'; 'prop_hydrosoil'= 'Soil_pred' ; 'prop_silvXfire' = 'silvXfire_pred'")) 
 
-Taxoscales <- scale_y_continuous(limits = c(0, 60))
+Taxoscales <- scale_y_continuous(limits = c(0, 60)) #to define limits at the plot y axes 
 
 blank_data_taxo <- data.frame(group = c("Ced_pred", "Ced_pred", "Fire_pred", "Fire_pred", "Silv_pred", "Silv_pred", "silvXfire_pred", "silvXfire_pred", "Soil_pred", "Soil_pred"), x = c(0.1, 
     0.4, 0.1, 0.4, 0.1, 0.4, 0.1, 0.4, 0.1, 0.4), y = c(10, 
     60, 10, 60, 10, 60, 10, 60, 10, 60)) # the smallest common range. It will expand according to the data
 
-# png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/Pretiction_plots_Taxo.png", width=738, height=512)
+# png(file = "C:/Users/Utilisateur/Desktop/Stage_M2_CI/Figures/Prediction_plots_Taxo.png", width=738, height=512)
 
 ggplot(Pred_covariantsdata_Taxo) +
- aes(x = covar_val, y = mean) +
-  geom_ribbon(aes(ymin = Lower_bound_2.5, ymax = Upper_bound_97.5), alpha = 0.2) +
- geom_point(size = 0.4, colour = "#FF6600") +
-  geom_point(data = Observed_values, aes(x =covar_val, y = DivTaxo_Shann ), colour = '#3e4a89', size = 0.4) +
-  labs(x = "Predictors proportions", y = "Predicted Hill's number") +
+ aes(x = covar_val, y = mean) + #display the average predicted values for each predictor value
+  geom_ribbon(aes(ymin = Lower_bound_2.5, ymax = Upper_bound_97.5), alpha = 0.2) + # bande de quantile
+ geom_point(size = 0.4, colour = "#FF6600") + #points = mean -> an orange line
+  geom_point(data = Observed_values, aes(x =covar_val, y = DivTaxo_Shann ), colour = '#3e4a89', size = 0.4) + #points = observed values
+  labs(x = "Predictors proportions", y = "Predicted Hill's number") + #titles
   geom_blank(data = blank_data_taxo, aes(x = x, y = y)) +
  theme_minimal() +
- facet_wrap(vars(covar_pred), scales = "free")
+ facet_wrap(vars(covar_pred), scales = "free") #display the effect of each predictor
 
 # dev.off()
 
 
 ```
-
 
 ## Stan for phylogenetic diversity of Shannon
 
@@ -2065,6 +2125,7 @@ _DivPhylo_Shann ~ lognormal(mu, sigma)_ LogNormal
 
 ### Intermediate Disturbance Hypothesis (IDH)
 #### Cedrela 
+Model running: 
 ```{r, results = 'hide'}
 DivPhylo_ShannM2_IDH_Ced
 
@@ -2075,7 +2136,7 @@ DivPhylo_ShannM2_IDH_Ced
 # theta3b = Cedrela parameter descending part 
 # theta4 = soil
 ```
-
+Model illustrations:
 ```{r}
 #Chains
 mcmc_trace(as.array(DivPhylo_ShannM2_IDH_Ced), #as.array = comme vecteur
@@ -2086,12 +2147,16 @@ mcmc_pairs(as.array(DivPhylo_ShannM2_IDH_Ced, pars = c("theta0","theta1","theta2
 
 #Boxplot
 mcmc_intervals(DivPhylo_ShannM2_IDH_Ced, pars = c("theta0","theta1","theta2","theta3a", "theta3b","theta4"))
+plot(DivPhylo_ShannM2_IDH_Ced, pars = c("theta0","theta1","theta2","theta3a", "theta3b","theta4"))
 
 ```
 Cedrela is not an "intermediate disturbance" : theta3a is negativ.
-
+Silv : no effect
+Fire : positiv effect
+Soil : positiv effect
 
 #### Sylviculture 
+Model running: 
 ```{r, results = 'hide'}
 DivPhylo_ShannM3_IDH_Sylv
 
@@ -2102,7 +2167,7 @@ DivPhylo_ShannM3_IDH_Sylv
 # theta3 = Cedrela parameter
 # theta4 = soil
 ```
-
+Model illustrations:
 ```{r}
 #Chains
 mcmc_trace(as.array(DivPhylo_ShannM3_IDH_Sylv), #as.array = comme vecteur
@@ -2113,12 +2178,16 @@ mcmc_pairs(as.array(DivPhylo_ShannM3_IDH_Sylv, pars = c("theta0","theta1a","thet
 
 #Boxplot
 mcmc_intervals(DivPhylo_ShannM3_IDH_Sylv, pars = c("theta0","theta1a","theta1b","theta2","theta3", "theta4")) 
+plot(DivPhylo_ShannM3_IDH_Sylv, pars = c("theta0","theta1a","theta1b","theta2","theta3", "theta4"))
 
 ```
-Sylviculture is not an "intermediate disturbance" : theta1a is negativ and theta1b is positiv.
-
+Silviculture is not an "intermediate disturbance" : theta1a is negativ and theta1b is positiv.
+Cedrela : negativ effect
+Fire : positiv effect
+Soil : positiv effect
 
 #### Fire 
+Model running: 
 ```{r, results = 'hide'}
 DivPhylo_ShannM4_IDH_Fire
 
@@ -2129,7 +2198,7 @@ DivPhylo_ShannM4_IDH_Fire
 # theta3 = Cedrela parameter
 # theta4 = soil
 ```
-
+Model illustrations:
 ```{r}
 #Chains
 mcmc_trace(as.array(DivPhylo_ShannM4_IDH_Fire), #as.array = comme vecteur
@@ -2140,13 +2209,17 @@ mcmc_pairs(as.array(DivPhylo_ShannM4_IDH_Fire, pars = c("theta0","theta1","theta
 
 #Boxplot
 mcmc_intervals(DivPhylo_ShannM4_IDH_Fire, pars = c("theta0","theta1","theta2a","theta2b","theta3", "theta4"))
+plot(DivPhylo_ShannM4_IDH_Fire, pars = c("theta0","theta1","theta2a","theta2b","theta3", "theta4"))
 
 ```
 Fire is not an "intermediate disturbance" : theta2b is positiv.
+Silv : negativ effect
+Cedrela : negativ effect
+Soil : positiv effect
 
+### Complete model
 
-### Interaction Sylviculture * fire
-
+Model running: 
 ```{r, results = 'hide'}
 DivPhylo_ShannM5_interac_fire_sylv
 
@@ -2157,7 +2230,7 @@ DivPhylo_ShannM5_interac_fire_sylv
 # theta4 = soil
 # theta5 = Fire:Sylv interaction
 ```
-
+Model illustrations:
 ```{r}
 #Chains
 mcmc_trace(as.array(DivPhylo_ShannM5_interac_fire_sylv), #as.array = comme vecteur
@@ -2208,7 +2281,7 @@ blank_data_phylo <- data.frame(group = c("Ced_pred", "Ced_pred", "Fire_pred", "F
     20, 5, 20, 5, 20, 5, 20, 5, 20)) # the smallest common range. It will expand according to the data
 
 
-# png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/Pretiction_plots_Phylo.png", width=738, height=512)
+# png(file = "C:/Users/Utilisateur/Desktop/Stage_M2_CI/Figures/Prediction_plots_Phylo.png", width=738, height=512)
 
 ggplot(Pred_covariantsdata_Phylo) +
  aes(x = covar_val, y = mean) +
@@ -2229,6 +2302,7 @@ _DivFctnal_Shann ~ lognormal(mu, sigma)_ LogNormal
 
 ### Intermediate Disturbance Hypothesis (IDH)
 #### Cedrela 
+Model running: 
 ```{r, results = 'hide'}
 DivFctnal_ShannM2_IDH_Ced
 
@@ -2239,7 +2313,7 @@ DivFctnal_ShannM2_IDH_Ced
 # theta3b = Cedrela parameter descending part 
 # theta4 = soil
 ```
-
+Model illustrations:
 ```{r}
 #Chains
 mcmc_trace(as.array(DivFctnal_ShannM2_IDH_Ced, pars = c("theta0","theta1","theta2","theta3a", "theta3b","theta4"))) #as.array = comme vecteur
@@ -2248,12 +2322,14 @@ mcmc_pairs(as.array(DivFctnal_ShannM2_IDH_Ced, pars = c("theta0","theta1","theta
 
 #Boxplot
 mcmc_intervals(DivFctnal_ShannM2_IDH_Ced, pars = c("theta0","theta1","theta2","theta3a", "theta3b","theta4"))
+plot(DivFctnal_ShannM2_IDH_Ced, pars = c("theta0","theta1","theta2","theta3a", "theta3b","theta4"))
 
 ```
 Cedrela is not an "intermediate disturbance" : theta3a is negativ.
 
 
 #### Sylviculture 
+Model running: 
 ```{r, results = 'hide'}
 DivFctnal_ShannM3_IDH_Sylv
 
@@ -2264,7 +2340,7 @@ DivFctnal_ShannM3_IDH_Sylv
 # theta3 = Cedrela parameter
 # theta4 = soil
 ```
-
+Model illustrations:
 ```{r}
 #Chains
 mcmc_trace(as.array(DivFctnal_ShannM3_IDH_Sylv), #as.array = comme vecteur
@@ -2275,12 +2351,16 @@ mcmc_pairs(as.array(DivFctnal_ShannM3_IDH_Sylv))
 
 #Boxplot
 mcmc_intervals(DivFctnal_ShannM3_IDH_Sylv, pars = c("theta0","theta1a","theta1b","theta2","theta3", "theta4")) 
+plot(DivFctnal_ShannM3_IDH_Sylv, pars = c("theta0","theta1a","theta1b","theta2","theta3", "theta4")) 
 
 ```
-Sylviculture is not an "intermediate disturbance" : theta1a is negativ and theta1b is positiv.
-
+Sylviculture is not an "intermediate disturbance" : theta1a is negativ and theta1b is positiv (or no effect).
+Cedrela : negativ effect
+Fire : positiv effect
+Soil : no effect
 
 #### Fire 
+Model running: 
 ```{r, results = 'hide'}
 DivFctnal_ShannM4_IDH_Fire
 
@@ -2291,7 +2371,7 @@ DivFctnal_ShannM4_IDH_Fire
 # theta3 = Cedrela parameter
 # theta4 = soil
 ```
-
+Model illustrations:
 ```{r}
 #Chains
 mcmc_trace(as.array(DivFctnal_ShannM4_IDH_Fire), #as.array = comme vecteur
@@ -2302,13 +2382,17 @@ mcmc_pairs(as.array(DivFctnal_ShannM4_IDH_Fire))
 
 #Boxplot
 mcmc_intervals(DivFctnal_ShannM4_IDH_Fire, pars = c("theta0","theta1","theta2a","theta2b","theta3", "theta4"))
+plot(DivFctnal_ShannM4_IDH_Fire, pars = c("theta0","theta1","theta2a","theta2b","theta3", "theta4"))
 
 ```
-Fire is not an "intermediate disturbance" : theta2b is positiv.
+Fire is not an "intermediate disturbance" : theta2b is positiv (or no effect).
+Silv : negativ effect
+Cedrela : negativ effect
+Soil : no effect
 
+### Complete model
 
-### Interaction Sylviculture * fire
-
+Model running: 
 ```{r, results = 'hide'}
 DivFctnal_ShannM5_interac_fire_sylv
 
@@ -2319,7 +2403,7 @@ DivFctnal_ShannM5_interac_fire_sylv
 # theta4 = soil
 # theta5 = Fire:Sylv interaction
 ```
-
+Model illustrations:
 ```{r}
 #Chains
 mcmc_trace(as.array(DivFctnal_ShannM5_interac_fire_sylv), #as.array = comme vecteur
@@ -2371,7 +2455,7 @@ blank_data_Fctnal <- data.frame(group = c("Ced_pred", "Ced_pred", "Fire_pred", "
     11, 6, 11, 6, 11, 6, 11, 6, 11)) # the smallest common range. It will expand according to the data
 
 
-# png(file = "C:/Users/Utilisateur/Desktop/Stage M2 Côte d'Ivoire/Figures/Pretiction_plots_Fctnal.png", width=738, height=512)
+# png(file = "C:/Users/Utilisateur/Desktop/Stage_M2_CI/Figures/Prediction_plots_Fctnal.png", width=738, height=512)
 
 ggplot(Pred_covariantsdata_Fctnal) +
  aes(x = covar_val, y = mean) +
@@ -2386,3 +2470,4 @@ ggplot(Pred_covariantsdata_Fctnal) +
 # dev.off()
 
 ```
+
